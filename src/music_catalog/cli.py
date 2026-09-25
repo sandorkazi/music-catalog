@@ -121,6 +121,47 @@ def cmd_publish(args) -> int:
     return 0
 
 
+def cmd_candidates(args) -> int:
+    """Rank a candidate pool for a gap artist: popular-but-dissimilar 2-pick (SPEC #8)."""
+    import json as _json
+
+    from .candidates import pick_candidates
+    from .store import find_artist, find_artist_by_name, normalize_name
+
+    catalog, _ = load_catalog(args.data_dir)
+    artist = find_artist(catalog, args.artist) or find_artist_by_name(catalog, args.artist)
+    if artist is None:
+        print(f"error: unknown artist {args.artist!r}", file=sys.stderr)
+        return 2
+    existing = [t for t in catalog["tracks"] if t.get("artist_id") == artist["id"]]
+    with open(args.pool, encoding="utf-8") as f:
+        raw_pool = _json.load(f)
+    if isinstance(raw_pool, dict) and "track_id" not in raw_pool:
+        items, _ = parse_export(args.pool, source=args.source)
+        pool = [
+            {"id": it.get("track_id"), "title": it.get("title"),
+             "popularity": it.get("popularity", 0), "features": {},
+             "artists": [a.get("name", "") for a in it.get("artists", [])]}
+            for it in items if not it.get("_unknown")
+        ]
+        # keep pool entries naming this artist; fall back to the whole pool
+        mine = [c for c in pool if normalize_name(artist["name"]) in
+                [normalize_name(n) for n in c["artists"]]]
+        pool = mine or pool
+        for c in pool:
+            c.pop("artists", None)
+    elif isinstance(raw_pool, list):
+        pool = raw_pool
+    else:
+        pool = [raw_pool]
+    report = pick_candidates(existing, pool, k=args.limit)
+    out = {"artist": {"id": artist["id"], "name": artist["name"],
+                      "owned_tracks": len(existing)},
+           "pool": len(pool), **report}
+    print(_json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_artist(args) -> int:
     catalog, catalog_path = load_catalog(args.data_dir)
     review, review_path = load_review(args.data_dir)
@@ -222,6 +263,12 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--dry-run", action="store_true", help="preview only (required in v1)")
     pu.add_argument("--limit", type=int, default=None, help="v2 batching hint")
     pu.set_defaults(func=cmd_publish)
+    ca = sub.add_parser("candidates", help="rank a candidate pool for a gap artist (2-pick)")
+    ca.add_argument("artist", help="artist id or name")
+    ca.add_argument("--pool", required=True, help="export JSON or track-list JSON file")
+    ca.add_argument("--source", default="spotify", help="pool parser hint (spotify|youtube)")
+    ca.add_argument("--limit", type=int, default=2, help="how many to pick (default 2)")
+    ca.set_defaults(func=cmd_candidates)
     return p
 
 
