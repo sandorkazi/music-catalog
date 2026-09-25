@@ -7,7 +7,14 @@ import sys
 
 from .data import resolve_data_dir
 from .importer import import_items, parse_export
-from .store import load_catalog, load_review, save_json
+from .store import (
+    artist_track_count,
+    dismiss_merge,
+    load_catalog,
+    load_review,
+    merge_artists,
+    save_json,
+)
 
 
 def cmd_import(args) -> int:
@@ -56,6 +63,62 @@ def cmd_xref(args) -> int:
     return 0
 
 
+def cmd_artist(args) -> int:
+    catalog, catalog_path = load_catalog(args.data_dir)
+    review, review_path = load_review(args.data_dir)
+    if args.artist_cmd == "list":
+        rows = [
+            {"id": a["id"], "name": a["name"], "aliases": a.get("aliases", []),
+             "tracks": artist_track_count(catalog, a["id"])}
+            for a in catalog["artists"]
+        ]
+        if args.source:
+            ids = {t["artist_id"] for t in catalog["tracks"] if t.get("source") == args.source}
+            rows = [r for r in rows if r["id"] in ids]
+        rows.sort(key=lambda r: (r["tracks"], r["name"].casefold()), reverse=(args.sort == "tracks"))
+        if args.sort == "name":
+            rows.sort(key=lambda r: r["name"].casefold())
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+    elif args.artist_cmd == "review":
+        print(json.dumps({"pending_merges": review["pending_merges"],
+                          "unknown": review["unknown"]}, indent=2, ensure_ascii=False))
+    elif args.artist_cmd == "merge":
+        summary = merge_artists(catalog, review, args.keep, args.drop)
+        save_json(catalog_path, catalog)
+        save_json(review_path, review)
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    elif args.artist_cmd == "dismiss":
+        ok = dismiss_merge(review, args.id1, args.id2)
+        if ok:
+            save_json(review_path, review)
+        print(json.dumps({"dismissed": ok, "ids": sorted([args.id1, args.id2])}))
+    return 0
+
+
+def cmd_gaps(args) -> int:
+    """Gap detection (SPEC #7): artists with < 2 tracks, 0-track / 1-track split."""
+    catalog, _ = load_catalog(args.data_dir)
+    gaps = {"zero": [], "one": []}
+    for a in catalog["artists"]:
+        n = artist_track_count(catalog, a["id"])
+        sources = sorted({t.get("source") for t in catalog["tracks"] if t.get("artist_id") == a["id"]})
+        if args.source and args.source not in sources:
+            continue
+        entry = {"id": a["id"], "name": a["name"], "tracks": n, "sources": sources}
+        if n == 0:
+            gaps["zero"].append(entry)
+        elif n == 1:
+            gaps["one"].append(entry)
+    key = (lambda e: e["name"].casefold()) if args.sort == "name" else (lambda e: (e["tracks"], e["name"].casefold()))
+    gaps["zero"].sort(key=key)
+    gaps["one"].sort(key=key)
+    print(json.dumps({"zero_track_artists": len(gaps["zero"]), "one_track_artists": len(gaps["one"]),
+                      "zero": gaps["zero"] if not args.compact else [],
+                      "one": gaps["one"] if not args.compact else []},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="catalog", description="Music catalog engine (local-first CLI)")
     p.add_argument("--data-dir", default=None, help="override data repo checkout dir")
@@ -71,6 +134,24 @@ def build_parser() -> argparse.ArgumentParser:
     xr.add_argument("--compact", action="store_true", help="omit per-item details, counts only")
     xr.add_argument("--apply", action="store_true", help="actually import (default is read-only report)")
     xr.set_defaults(func=cmd_xref)
+    ar = sub.add_parser("artist", help="artist registry: list/review/merge/dismiss")
+    ar_sub = ar.add_subparsers(dest="artist_cmd", required=True)
+    ar_l = ar_sub.add_parser("list", help="list artists with track counts")
+    ar_l.add_argument("--source", default=None, help="only artists with tracks from this source")
+    ar_l.add_argument("--sort", default="name", choices=["name", "tracks"])
+    ar_r = ar_sub.add_parser("review", help="show pending merges + unknown queue")
+    ar_m = ar_sub.add_parser("merge", help="merge two artists (explicit, user-approved)")
+    ar_m.add_argument("--keep", required=True, help="artist id to keep")
+    ar_m.add_argument("--drop", required=True, help="artist id to fold in and remove")
+    ar_d = ar_sub.add_parser("dismiss", help="reject a pending merge without merging")
+    ar_d.add_argument("id1")
+    ar_d.add_argument("id2")
+    ar.set_defaults(func=cmd_artist)
+    gp = sub.add_parser("gaps", help="list artists with < 2 tracks (0-track / 1-track split)")
+    gp.add_argument("--source", default=None, help="only artists with tracks from this source")
+    gp.add_argument("--sort", default="name", choices=["name", "tracks"])
+    gp.add_argument("--compact", action="store_true", help="counts only")
+    gp.set_defaults(func=cmd_gaps)
     return p
 
 

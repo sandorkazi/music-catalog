@@ -17,3 +17,9 @@ Log: last green commit + next box here on every stop.
   Dry-run vs Spotify catalog: 11 matched_exact / 69 new / 23 unknown.
   `pytest tests/` 8 passed. Applied 2026-09-25: +86 artists / +80 tracks
   (1072 / 1552), 23 unknowns queued, 11 pending merges proposed.
+- 2026-09-25: merges done — `catalog artist merge/dismiss/review/list` +
+  `catalog gaps` live (`store.merge_artists`, cap-5 + pinned survive).
+  Merged 12 (10 YT→Spotify, Ghymes×2, Pain×2), dismissed 1 false positive
+  (DVBBS↔Borgeous collab). Now 1060 artists / 1552 tracks, 0 pending,
+  23 unknown. Gaps: 65 one-track YT artists, 215 zero + 156 one overall.
+  `pytest tests/` 12 passed.
