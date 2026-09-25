@@ -162,6 +162,33 @@ def cmd_candidates(args) -> int:
     return 0
 
 
+def cmd_viz(args) -> int:
+    from .viz import render_html
+
+    catalog, _ = load_catalog(args.data_dir)
+    out = render_html(catalog)
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(out)
+    print(json.dumps({"out": args.out, "artists": len(catalog["artists"]),
+                      "tracks": len(catalog["tracks"])}))
+    return 0
+
+
+def cmd_similar(args) -> int:
+    from .viz import similar_artists, similar_tracks
+
+    catalog, _ = load_catalog(args.data_dir)
+    try:
+        rows = similar_artists(catalog, args.id, top=args.top, least=args.least) if args.by == "artist" \
+            else similar_tracks(catalog, args.id, top=args.top, least=args.least)
+    except KeyError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps({"query": args.id, "by": args.by, "least": args.least, "results": rows},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_artist(args) -> int:
     catalog, catalog_path = load_catalog(args.data_dir)
     review, review_path = load_review(args.data_dir)
@@ -269,6 +296,15 @@ def build_parser() -> argparse.ArgumentParser:
     ca.add_argument("--source", default="spotify", help="pool parser hint (spotify|youtube)")
     ca.add_argument("--limit", type=int, default=2, help="how many to pick (default 2)")
     ca.set_defaults(func=cmd_candidates)
+    vz = sub.add_parser("viz", help="export static HTML similarity maps (artists+genres, tracks)")
+    vz.add_argument("--out", required=True, help="output HTML file")
+    vz.set_defaults(func=cmd_viz)
+    si = sub.add_parser("similar", help="most/least similar artists or tracks to X")
+    si.add_argument("id", help="artist id (with --by artist) or track id (with --by track)")
+    si.add_argument("--by", default="artist", choices=["artist", "track"])
+    si.add_argument("--top", type=int, default=5)
+    si.add_argument("--least", action="store_true", help="flip to least-similar")
+    si.set_defaults(func=cmd_similar)
     return p
 
 
