@@ -77,3 +77,9 @@ stub (`publish(dry_run=True)`) so v2 phase 7 plugs in YT + Spotify publishers.
 
 Track in `music-catalog/PROGRESS.md`: `- [ ]` per phase row above +
 last green commit. Update it before every stop.
+
+- 2026-09-26: v1 complete (phases 0–6 on `develop`, 29 tests green,
+  `scripts/smoke.sh` green). Only row 7 (v2 publish) remains.
+  Note: `herdr` binary not installed here, so phases 3–6 were built
+  directly on `develop` instead of one-worktree-per-phase; re-adopt the
+  worktree flow for v2.

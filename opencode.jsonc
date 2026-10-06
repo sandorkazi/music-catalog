@@ -1,0 +1,18 @@
+{
+  // opencode entry point is this repo root (code). Data repo is the
+  // sibling ../music-catalog-masu checkout (outside the watched tree).
+  "$schema": "https://opencode.ai/config.json",
+  "watcher": {
+    "ignore": [
+      ".pytest_cache/**",
+      "__pycache__/**"
+    ]
+  },
+  "permissions": [
+    {
+      "action": "shell",
+      "resource": "git push *",
+      "effect": "ask"
+    }
+  ]
+}

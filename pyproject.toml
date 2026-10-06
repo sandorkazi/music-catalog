@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "music-catalog"
+version = "0.4.0"
+description = "Local-first music catalog engine CLI"
+requires-python = ">=3.10"
+
+[project.scripts]
+catalog = "music_catalog.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
