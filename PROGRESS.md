@@ -11,6 +11,19 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
+  browser (`catalog viz --out-dir docs/`: vis-network force graph,
+  845 nodes/1898 edges, acronym-in-circle, hover focus + info panel,
+  filters) and phase A tags (`taxonomy.json`: 20 genres + subgenre
+  parents + 33 instruments + aliases; schema v2 with in-memory
+  migration; `catalog tags set/show/review/taxonomy`; artist-level
+  tags feed `similar`/maps; merges union tags). Verified without
+  pytest (none installed here): 32 pass, 2 pre-existing env failures
+  (`test_youtube` needs `/tmp/yt-masu.json`, `test_sources` needs
+  `monkeypatch`). Real-data check on a copy: shaabi-tagged
+  Bahaa Sultan → nearest is shaabi-tagged Ahmed Saad. Data repo
+  untouched. Next: run `pytest` where available, then phase B
+  (MusicBrainz + Wikidata no-key enrichment).
 - 2026-09-26: phases 3–6 done on `develop` — `sources.py` + `catalog monitor/publish`
   (`pytest` 18 passed), `candidates.py` + `catalog candidates` (24 passed),
   `viz.py` + `catalog viz/similar` (29 passed), polish (`pyproject.toml` with

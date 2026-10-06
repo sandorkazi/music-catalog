@@ -9,7 +9,7 @@ from .data import resolve_data_dir, state_path
 
 CATALOG_FILE = "catalog.json"
 REVIEW_FILE = "review.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TRACKS_PER_ARTIST_CAP = 5
 
 _ws = re.compile(r"\s+")
@@ -52,10 +52,13 @@ def save_json(path: Path, data: dict) -> None:
 
 
 def load_catalog(data_dir=None) -> tuple[dict, Path]:
+    from .tags import migrate_catalog  # deferred: tags must not import store
+
     path = state_path(CATALOG_FILE, data_dir)
     data = load_json(path, empty_catalog())
     data.setdefault("artists", [])
     data.setdefault("tracks", [])
+    migrate_catalog(data)  # in-memory v1 -> v2; persisted on next write
     return data, path
 
 
@@ -93,7 +96,9 @@ def ensure_artist(catalog: dict, review: dict, artist_id: str, name: str) -> tup
     existing = find_artist(catalog, artist_id)
     if existing is not None:
         return existing, False, False
-    artist = {"id": artist_id, "name": name, "aliases": [], "status": "ok"}
+    artist = {"id": artist_id, "name": name, "aliases": [], "status": "ok",
+              "genres": [], "subgenres": [], "instruments": [],
+              "tag_source": None, "tagged_at": None}
     catalog["artists"].append(artist)
     clash = find_artist_by_name(catalog, name)
     merge_pending = False
@@ -144,6 +149,11 @@ def merge_artists(catalog: dict, review: dict, keep_id: str, drop_id: str) -> di
             keep.setdefault("aliases", []).append(name)
             known.add(normalize_name(name))
             summary["added_aliases"].append(name)
+    for kind in ("genres", "subgenres", "instruments"):
+        merged = sorted(set(keep.get(kind, [])) | set(drop.get(kind, [])))
+        if merged != keep.get(kind, []):
+            keep[kind] = merged
+            summary.setdefault("added_tags", {}).setdefault(kind, merged)
     catalog["artists"].remove(drop)
     before = len(review.get("pending_merges", []))
     review["pending_merges"] = [e for e in review.get("pending_merges", []) if drop_id not in e.get("candidate_ids", [])]

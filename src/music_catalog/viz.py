@@ -8,12 +8,22 @@ when tracks carry no features the layout degrades to a deterministic
 hash-jitter grid so the export never crashes on sparse catalogs.
 Hover shows labels (SVG <title>), click fills an inspect panel
 (inline vanilla JS, no CDN — offline-capable).
+
+``build_graph`` / ``render_site`` power the GitHub Pages browser
+(``catalog viz --out-dir docs/``): a kNN similarity graph
+(nodes = in-catalog artists with acronym-in-circle placeholders,
+edges = top-k nearest neighbours) rendered with vis-network
+(force layout, zoom, hover info panel, filters) from ``graph.json``.
 """
 from __future__ import annotations
 
 import hashlib
 import html
+import json
 import math
+import re
+import unicodedata
+from pathlib import Path
 
 from .candidates import _genres, _numbers, cosine_sim, jaccard
 
@@ -29,6 +39,13 @@ def artist_vector(catalog: dict, artist_id: str) -> dict:
     genres: set[str] = set()
     for t in tracks:
         genres |= _genres(t)
+    # artist-level tags (schema v2) join the same token space so tagged
+    # artists cluster even when their tracks carry no genre metadata
+    artist = next((a for a in catalog.get("artists", []) if a.get("id") == artist_id), None)
+    if artist is not None:
+        for g in list(artist.get("genres", [])) + list(artist.get("subgenres", [])):
+            if str(g).strip():
+                genres.add(str(g).strip().casefold())
     pops = [t.get("popularity", 0) or 0 for t in tracks]
     return {
         "features": nums,
@@ -242,3 +259,229 @@ document.querySelectorAll("circle,rect").forEach(function(el){{
 </script>
 </body></html>
 """
+
+
+GRAPH_K = 3  # edges per artist (nearest neighbours)
+VIS_CDN = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+
+
+def acronym_for(name: str) -> str:
+    """2-letter acronym for the in-circle placeholder. Deterministic.
+
+    First letters of first + last word (``DJ Snake`` -> ``DS``);
+    single word uses its first two letters (``GIMS`` -> ``GI``).
+    Diacritics stripped; empty names fall back to ``?``.
+    """
+    ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", ascii_name) if w]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[-1][0]).upper()
+
+
+def color_for(artist_id: str) -> str:
+    """Deterministic pastel fill color derived from the artist id."""
+    h = int(hashlib.md5(f"node-{artist_id}".encode()).hexdigest()[:8], 16)
+    return f"hsl({h % 360}, 55%, 72%)"
+
+
+def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
+    """kNN similarity graph over in-catalog artists (tracks >= 1).
+
+    Nodes carry ``{id, name, acronym, color, tracks, pop, sources}``;
+    edges are undirected deduped ``{a, b, dist}`` pairs to the ``k``
+    nearest neighbours by :func:`artist_distance` (same vectors the
+    CLI ``similar`` query uses, so page and CLI agree). Zero-track
+    artists are excluded from the graph and reported as
+    ``excluded_zero_track``.
+    """
+    artists = [a for a in catalog.get("artists", []) if a.get("status", "ok") == "ok"]
+    vecs = {a["id"]: artist_vector(catalog, a["id"]) for a in artists}
+    in_catalog = [a for a in artists if vecs[a["id"]]["count"] >= 1]
+    nodes = []
+    for a in in_catalog:
+        v = vecs[a["id"]]
+        mine = [t for t in catalog.get("tracks", []) if t.get("artist_id") == a["id"]]
+        sources = sorted({t.get("source", "?") for t in mine})
+        nodes.append({
+            "id": a["id"],
+            "name": a.get("name", a["id"]),
+            "acronym": acronym_for(a.get("name", "")),
+            "color": color_for(a["id"]),
+            "tracks": v["count"],
+            "pop": round(v["pop"], 1),
+            "sources": sources,
+        })
+    seen: set[tuple[str, str]] = set()
+    edges = []
+    ids = [a["id"] for a in in_catalog]
+    for aid in ids:
+        dists = sorted(
+            ((artist_distance(vecs[aid], vecs[other]), other) for other in ids if other != aid)
+        )
+        for dist, other in dists[:k]:
+            key = (min(aid, other), max(aid, other))
+            if key not in seen:
+                seen.add(key)
+                edges.append({"a": key[0], "b": key[1], "dist": round(dist, 4)})
+    zero = sum(1 for a in artists if vecs[a["id"]]["count"] == 0)
+    return {"nodes": nodes, "edges": edges, "excluded_zero_track": zero}
+
+
+SITE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:0 1em;max-width:1200px;margin-inline:auto}
+#toolbar{display:flex;flex-wrap:wrap;gap:.75em;align-items:center;margin:.75em 0}
+#toolbar label{font-size:.85em}
+#layout{display:grid;grid-template-columns:1fr 280px;gap:1em}
+#network{border:1px solid #ccc;height:70vh;min-height:420px}
+#info{border:1px solid #ccc;padding:.75em;font-size:.9em;max-height:70vh;overflow:auto}
+#info h2{margin:.2em 0;font-size:1.1em}
+#info ul{padding-left:1.2em;margin:.4em 0}
+footer{color:#666;font-size:.8em;margin:1em 0 2em}
+@media(max-width:800px){#layout{grid-template-columns:1fr}}
+</style></head><body>
+<h1>__TITLE__</h1>
+<p id="counts">Loading…</p>
+<div id="toolbar">
+<label>Search <input id="q" type="search" placeholder="artist name"></label>
+<label>Source <select id="f-source"><option value="">all</option></select></label>
+<label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
+<label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
+<label><input id="f-edges" type="checkbox" checked> edges</label>
+<button id="f-reset">Reset</button>
+</div>
+<div id="layout">
+<div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
+<aside id="info"><h2>Artist info</h2><p>Hover a circle to preview, click to pin. Scroll to zoom, drag to pan.</p></aside>
+</div>
+<footer>Metadata (names, counts) from the curated catalog. No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
+<script src="__VIS_CDN__"></script>
+<script>
+var ALL = null, network = null, nodes = null, edges = null, pinned = null;
+function infoHTML(n){
+  var sims = ALL.edges.filter(function(e){return e.a===n.id||e.b===n.id;})
+    .map(function(e){var o=e.a===n.id?e.b:e.a;var m=ALL.byId[o];return {n:m,d:e.dist};})
+    .sort(function(x,y){return x.d-y.d;}).slice(0,5);
+  var h = "<h2>"+escapeHTML(n.name)+"</h2><p>"+n.tracks+" track(s) · pop "+n.pop+" · "+n.sources.join(", ")+"</p>";
+  h += "<p><strong>Nearest neighbours</strong></p><ul>"+sims.map(function(s){
+    return "<li><a href='#' data-id='"+s.n.id+"'>"+escapeHTML(s.n.name)+"</a> ("+s.d.toFixed(2)+")</li>";}).join("")+"</ul>";
+  return h;
+}
+function escapeHTML(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function passFilters(n){
+  var src = document.getElementById("f-source").value;
+  var mt = parseInt(document.getElementById("f-tracks").value,10);
+  var mp = parseInt(document.getElementById("f-pop").value,10);
+  var q = document.getElementById("q").value.trim().toLowerCase();
+  if(src && n.sources.indexOf(src)<0) return false;
+  if(n.tracks<mt||n.pop<mp) return false;
+  if(q && n.name.toLowerCase().indexOf(q)<0) return false;
+  return true;
+}
+function applyFilters(){
+  var vis = ALL.nodes.filter(passFilters).map(function(n){return n.id;});
+  var visSet = {}; vis.forEach(function(id){visSet[id]=true;});
+  nodes.get().forEach(function(n){nodes.update({id:n.id,hidden:!visSet[n.id]});});
+  var showE = document.getElementById("f-edges").checked;
+  edges.get().forEach(function(e){
+    var edge = ALL.edges.filter(function(x){return x.id===e.id;})[0];
+    edges.update({id:e.id,hidden:!showE||!visSet[edge.a]||!visSet[edge.b]});
+  });
+}
+function highlight(id){
+  var connected = {}; connected[id]=true;
+  network.getConnectedNodes(id).forEach(function(x){connected[x]=true;});
+  nodes.get().forEach(function(n){
+    nodes.update({id:n.id,opacity:connected[n.id]?1:0.15});
+  });
+  edges.get().forEach(function(e){
+    var edge = ALL.edges.filter(function(x){return x.id===e.id;})[0];
+    edges.update({id:e.id,color:{opacity:(edge.a===id||edge.b===id)?1:0.08}});
+  });
+}
+function clearHighlight(){
+  nodes.get().forEach(function(n){nodes.update({id:n.id,opacity:1});});
+  edges.get().forEach(function(e){edges.update({id:e.id,color:{opacity:1}});});
+}
+function showInfo(id){document.getElementById("info").innerHTML = infoHTML(ALL.byId[id]);}
+fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
+  ALL = g; ALL.byId = {};
+  g.nodes.forEach(function(n){ALL.byId[n.id]=n;});
+  var srcs = {}; g.nodes.forEach(function(n){n.sources.forEach(function(s){srcs[s]=true;});});
+  Object.keys(srcs).sort().forEach(function(s){
+    var o=document.createElement("option");o.value=s;o.textContent=s;
+    document.getElementById("f-source").appendChild(o);
+  });
+  document.getElementById("counts").textContent =
+    g.nodes.length+" artists, "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded).";
+  var vNodes = g.nodes.map(function(n,i){
+    return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
+      shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
+      font:{size:14,face:"sans-serif"}};
+  });
+  var vEdges = g.edges.map(function(e,i){
+    return {id:"e"+i,from:e.a,to:e.b,value:Math.max(0.2,1.2-e.dist),
+      color:{opacity:1},smooth:{type:"continuous"}};
+  });
+  g.edges.forEach(function(e,i){e.id="e"+i;});
+  nodes = new vis.DataSet(vNodes); edges = new vis.DataSet(vEdges);
+  network = new vis.Network(document.getElementById("network"),{nodes:nodes,edges:edges},{
+    physics:{solver:"barnesHut",barnesHut:{gravitationalConstant:-4000,springLength:120,avoidOverlap:0.3},stabilization:{iterations:300}},
+    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,multiselect:false},
+    nodes:{borderWidth:1}
+  });
+  network.on("hoverNode",function(p){showInfo(p.node);highlight(p.node);network.focus(p.node,{scale:1.6,animation:{duration:400}});});
+  network.on("blurNode",function(){if(!pinned)clearHighlight();});
+  network.on("click",function(p){
+    if(p.nodes.length){pinned=p.nodes[0];showInfo(pinned);highlight(pinned);}
+    else{pinned=null;clearHighlight();}
+  });
+  document.getElementById("info").addEventListener("click",function(ev){
+    var a = ev.target.closest ? ev.target.closest("a[data-id]") : null;
+    if(a){ev.preventDefault();var id=a.getAttribute("data-id");pinned=id;showInfo(id);highlight(id);network.focus(id,{scale:1.6,animation:{duration:400}});network.selectNodes([id]);}
+  });
+  ["q","f-source","f-tracks","f-pop","f-edges"].forEach(function(id){
+    document.getElementById(id).addEventListener("input",function(){
+      document.getElementById("f-pop-v").textContent=document.getElementById("f-pop").value;
+      applyFilters();
+    });
+  });
+  document.getElementById("f-reset").addEventListener("click",function(){
+    document.getElementById("q").value="";document.getElementById("f-source").value="";
+    document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
+    document.getElementById("f-pop-v").textContent="0";
+    document.getElementById("f-edges").checked=true;applyFilters();
+  });
+}).catch(function(err){
+  document.getElementById("counts").textContent =
+    "Could not load graph.json ("+err+"). Serve this folder over http: python3 -m http.server";
+});
+</script>
+</body></html>
+"""
+
+
+def render_site(catalog: dict, out_dir: str | Path,
+                title: str = "Music catalog — artist similarity browser") -> dict:
+    """Export the GitHub Pages site: ``graph.json`` + ``index.html``.
+
+    Returns ``{"dir": ..., "nodes": ..., "edges": ..., "excluded_zero_track": ...}``.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    graph = build_graph(catalog)
+    with open(out / "graph.json", "w", encoding="utf-8") as f:
+        json.dump(graph, f, ensure_ascii=False, indent=1)
+    page = SITE_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__VIS_CDN__", VIS_CDN)
+    with open(out / "index.html", "w", encoding="utf-8") as f:
+        f.write(page)
+    return {"dir": str(out), "nodes": len(graph["nodes"]),
+            "edges": len(graph["edges"]),
+            "excluded_zero_track": graph["excluded_zero_track"]}
+

@@ -106,6 +106,41 @@ an artists+genres map and a tracks map from one 2D PCA over
 [mean audio features, genre one-hots, popularity]. Hover for labels,
 click a point to inspect. Open the file directly — no server needed.
 
+## Tags (genres, subgenres, instruments)
+
+```bash
+catalog tags taxonomy --kind genres       # controlled vocabulary (20 genres)
+catalog tags taxonomy --kind subgenres    # each maps to exactly one parent
+catalog tags taxonomy --kind instruments  # 33 instruments
+catalog tags set "Bahaa Sultan" --subgenre shaabi --instrument vocals
+catalog tags show "Bahaa Sultan"
+catalog tags review --limit 50            # coverage + untagged queue + violations
+```
+
+Manual curation against `src/music_catalog/taxonomy.json` (schema v2,
+additive — v1 state migrates in memory, persisted on next write).
+Setting a subgenre auto-adds its parent; unknown tags are rejected
+(exit 2) instead of stored. Tracks may carry `genres`/`instruments`
+as an override, else the artist's tags apply. Artist-level tags feed
+`similar`/`candidates`/both maps immediately; instruments are
+display/filter metadata and don't affect scoring yet.
+
+## GitHub Pages browser
+
+```bash
+catalog viz --out-dir docs
+python3 -m http.server -d docs 8000   # local preview (file:// blocks graph.json)
+```
+
+Writes `docs/graph.json` (kNN similarity graph over in-catalog
+artists, same `artist_distance` the CLI `similar` query uses) plus
+`docs/index.html` (vis-network via CDN: force layout, wheel-zoom,
+hover → neighbourhood highlight + camera focus + info panel, click
+to pin, filters for search/source/track-count/popularity). Nodes are
+acronym-in-circle placeholders — no artwork is hosted or copied.
+Enable Pages with `Settings → Pages → Deploy from branch → docs/`;
+re-run the export + commit whenever the catalog changes.
+
 ## Publish (v1 stub)
 
 ```bash

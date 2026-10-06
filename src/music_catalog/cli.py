@@ -162,10 +162,66 @@ def cmd_candidates(args) -> int:
     return 0
 
 
+def cmd_tags(args) -> int:
+    """Curated tags: set/show/review/taxonomy (schema v2, manual curation)."""
+    from .store import find_artist_by_name
+    from .tags import (coverage, find_artist_tags, load_taxonomy, set_artist_tags,
+                       untagged_artists, validate_catalog)
+
+    catalog, catalog_path = load_catalog(args.data_dir)
+    if args.tags_cmd == "taxonomy":
+        tax = load_taxonomy()
+        if args.kind == "subgenres":
+            print(json.dumps(tax["subgenres"], indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(sorted(tax[args.kind]), indent=2, ensure_ascii=False))
+        return 0
+    if args.tags_cmd == "review":
+        bad = validate_catalog(catalog)
+        queue = untagged_artists(catalog)
+        limit = args.limit
+        print(json.dumps({"coverage": coverage(catalog),
+                          "taxonomy_violations": bad,
+                          "untagged_shown": len(queue[:limit]),
+                          "untagged_total": len(queue),
+                          "untagged": queue[:limit]},
+                         indent=2, ensure_ascii=False))
+        return 0
+    artist = next((a for a in catalog["artists"] if a.get("id") == args.artist), None)
+    artist = artist or find_artist_by_name(catalog, args.artist)
+    if artist is None:
+        print(f"error: unknown artist {args.artist!r}", file=sys.stderr)
+        return 2
+    if args.tags_cmd == "show":
+        print(json.dumps(find_artist_tags(catalog, artist["id"]),
+                         indent=2, ensure_ascii=False))
+        return 0
+    # set: replace (or --clear); validates against taxonomy
+    try:
+        summary = set_artist_tags(catalog, artist["id"], genres=args.genre,
+                                  subgenres=args.subgenre,
+                                  instruments=args.instrument,
+                                  source=args.source, clear=args.clear)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    save_json(catalog_path, catalog)
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_viz(args) -> int:
-    from .viz import render_html
+    from .viz import render_html, render_site
 
     catalog, _ = load_catalog(args.data_dir)
+    if args.out_dir:
+        summary = render_site(catalog, args.out_dir)
+        summary["mode"] = "site"
+        print(json.dumps(summary, indent=2))
+        return 0
+    if not args.out:
+        print("error: one of --out or --out-dir is required", file=sys.stderr)
+        return 2
     out = render_html(catalog)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(out)
@@ -296,8 +352,26 @@ def build_parser() -> argparse.ArgumentParser:
     ca.add_argument("--source", default="spotify", help="pool parser hint (spotify|youtube)")
     ca.add_argument("--limit", type=int, default=2, help="how many to pick (default 2)")
     ca.set_defaults(func=cmd_candidates)
+    tg = sub.add_parser("tags", help="curated genre/subgenre/instrument tags")
+    tg_sub = tg.add_subparsers(dest="tags_cmd", required=True)
+    tg_set = tg_sub.add_parser("set", help="replace an artist's tags (validates taxonomy)")
+    tg_set.add_argument("artist", help="artist id or name")
+    tg_set.add_argument("--genre", action="append", default=[])
+    tg_set.add_argument("--subgenre", action="append", default=[])
+    tg_set.add_argument("--instrument", action="append", default=[])
+    tg_set.add_argument("--source", default="manual")
+    tg_set.add_argument("--clear", action="store_true", help="wipe all tags")
+    tg_show = tg_sub.add_parser("show", help="show an artist's tags")
+    tg_show.add_argument("artist", help="artist id or name")
+    tg_rev = tg_sub.add_parser("review", help="coverage + untagged queue + taxonomy violations")
+    tg_rev.add_argument("--limit", type=int, default=50)
+    tg_tax = tg_sub.add_parser("taxonomy", help="dump the controlled vocabulary")
+    tg_tax.add_argument("--kind", default="genres", choices=["genres", "subgenres", "instruments"])
+    tg.set_defaults(func=cmd_tags)
     vz = sub.add_parser("viz", help="export static HTML similarity maps (artists+genres, tracks)")
-    vz.add_argument("--out", required=True, help="output HTML file")
+    vz.add_argument("--out", required=False, default=None, help="output HTML file (legacy single-file map)")
+    vz.add_argument("--out-dir", required=False, default=None,
+                    help="output dir for the github.io browser (graph.json + index.html)")
     vz.set_defaults(func=cmd_viz)
     si = sub.add_parser("similar", help="most/least similar artists or tracks to X")
     si.add_argument("id", help="artist id (with --by artist) or track id (with --by track)")
