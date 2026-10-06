@@ -9,8 +9,10 @@ for status, `docs/` for guides.
 
 ## Repos
 
-- Code (this repo): `git@github.com:sandorkazi/music-catalog.git`
-- Data (state sync): `git@github.com:sandorkazi/music-catalog-masu.git`
+- Code (this repo): [sandorkazi/music-catalog](https://github.com/sandorkazi/music-catalog)
+  (`git@github.com:sandorkazi/music-catalog.git`)
+- Data — the actual catalog data: [sandorkazi/music-catalog-masu](https://github.com/sandorkazi/music-catalog-masu)
+  (`git@github.com:sandorkazi/music-catalog-masu.git`)
 
 State (`catalog.json`, `review.json`, `snapshots/`) lives in the
 **data repo**, never here. This repo holds code + docs + tests only.
@@ -56,7 +58,8 @@ catalog artist dismiss <id1> <id2>            # reject a merge candidate
 catalog gaps [--source spotify]               # artists with < 2 tracks
 catalog candidates <artist> --pool pool.json  # popular-but-dissimilar 2-pick
 catalog similar <id> --by artist|track [--least]  # similarity query
-catalog viz --out map.html                    # static HTML maps (no server)
+catalog viz --out-dir docs                    # artist similarity browser (graph.json + index.html)
+catalog tags set/show/review/taxonomy         # curated genre/subgenre/instrument tags
 catalog publish --to youtube|spotify|both --dry-run  # v1: preview only
 ```
 
