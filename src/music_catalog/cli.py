@@ -211,11 +211,31 @@ def cmd_tags(args) -> int:
 
 
 def cmd_viz(args) -> int:
-    from .viz import render_html, render_site
+    from pathlib import Path
+
+    from .viz import catalog_fingerprint, render_html, render_site
 
     catalog, _ = load_catalog(args.data_dir)
+    sha = catalog_fingerprint(catalog)
+    if args.check:
+        if not args.out_dir:
+            print("error: --check needs --out-dir <site-dir>", file=sys.stderr)
+            return 2
+        site = Path(args.out_dir) / "graph.json"
+        try:
+            meta = json.loads(site.read_text(encoding="utf-8")).get("meta", {})
+        except (OSError, ValueError) as e:
+            print(json.dumps({"fresh": False, "reason": f"unreadable graph.json: {e}",
+                              "site": str(site), "catalog_sha256": sha}))
+            return 1
+        fresh = meta.get("catalog_sha256") == sha
+        print(json.dumps({"fresh": fresh, "catalog_sha256": sha,
+                          "site_sha256": meta.get("catalog_sha256"),
+                          "generated_at": meta.get("generated_at"),
+                          "site": str(site)}))
+        return 0 if fresh else 1
     if args.out_dir:
-        summary = render_site(catalog, args.out_dir)
+        summary = render_site(catalog, args.out_dir, catalog_sha=sha)
         summary["mode"] = "site"
         print(json.dumps(summary, indent=2))
         return 0
@@ -372,6 +392,8 @@ def build_parser() -> argparse.ArgumentParser:
     vz.add_argument("--out", required=False, default=None, help="output HTML file (legacy single-file map)")
     vz.add_argument("--out-dir", required=False, default=None,
                     help="output dir for the github.io browser (graph.json + index.html)")
+    vz.add_argument("--check", action="store_true",
+                    help="with --out-dir: validate the published graph.json is fresh (exit 1 if stale)")
     vz.set_defaults(func=cmd_viz)
     si = sub.add_parser("similar", help="most/least similar artists or tracks to X")
     si.add_argument("id", help="artist id (with --by artist) or track id (with --by track)")

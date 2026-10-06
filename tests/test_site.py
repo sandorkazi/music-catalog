@@ -1,6 +1,6 @@
 """Tests for the github.io graph exporter (viz.build_graph/render_site)."""
 from music_catalog.store import empty_catalog
-from music_catalog.viz import acronym_for, build_graph, color_for, render_site
+from music_catalog.viz import acronym_for, build_graph, catalog_fingerprint, color_for, render_site
 
 
 def _catalog():
@@ -54,3 +54,26 @@ def test_render_site_writes_graph_and_page(tmp_path):
     assert (tmp_path / "site" / "graph.json").exists()
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
     assert "vis-network" in page and "graph.json" in page
+
+
+def test_catalog_fingerprint_stable_and_sensitive():
+    c = _catalog()
+    assert catalog_fingerprint(c) == catalog_fingerprint(_catalog())
+    other = _catalog()
+    other["tracks"] = other["tracks"] + [
+        {"id": "t9", "artist_id": "a3", "title": "Extra", "source": "spotify",
+         "popularity": 10, "features": {}, "genres": []},
+    ]
+    assert catalog_fingerprint(other) != catalog_fingerprint(c)
+
+
+def test_render_site_stamps_meta(tmp_path):
+    import json
+
+    summary = render_site(_catalog(), tmp_path / "site")
+    g = json.loads((tmp_path / "site" / "graph.json").read_text(encoding="utf-8"))
+    assert g["meta"]["catalog_sha256"] == summary["catalog_sha256"]
+    assert g["meta"]["catalog_sha256"] == catalog_fingerprint(_catalog())
+    assert g["meta"]["generated_at"]
+    page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
+    assert "freshnessLine" in page and "catalog_sha256" in page

@@ -125,21 +125,40 @@ as an override, else the artist's tags apply. Artist-level tags feed
 `similar`/`candidates`/both maps immediately; instruments are
 display/filter metadata and don't affect scoring yet.
 
-## GitHub Pages browser
+## GitHub Pages browser (lives in the data repo)
+
+The live artist-similarity browser is served from the **data repo**:
+`docs/graph.json` (kNN similarity graph over in-catalog artists, same
+`artist_distance` the CLI `similar` query uses) plus `docs/index.html`
+(vis-network via CDN: force layout, wheel-zoom, hover → neighbourhood
+highlight + camera focus + info panel, click to pin, filters for
+search/source/track-count/popularity). Nodes are acronym-in-circle
+placeholders — no artwork is hosted or copied. The export is generated
+**natively from that repo's own `state/catalog.json`** — no data is
+duplicated across repos; the code repo only provides the generator.
 
 ```bash
-catalog viz --out-dir docs
-python3 -m http.server -d docs 8000   # local preview (file:// blocks graph.json)
+bash scripts/publish-viz.sh            # render into <data-repo>/docs + commit there
+bash scripts/publish-viz.sh --check    # validate the published site is fresh (exit 1 if stale)
+python3 -m http.server -d <data-repo>/docs 8000   # local preview (file:// blocks graph.json)
 ```
 
-Writes `docs/graph.json` (kNN similarity graph over in-catalog
-artists, same `artist_distance` the CLI `similar` query uses) plus
-`docs/index.html` (vis-network via CDN: force layout, wheel-zoom,
-hover → neighbourhood highlight + camera focus + info panel, click
-to pin, filters for search/source/track-count/popularity). Nodes are
-acronym-in-circle placeholders — no artwork is hosted or copied.
-Enable Pages with `Settings → Pages → Deploy from branch → docs/`;
-re-run the export + commit whenever the catalog changes.
+Each export stamps `graph.json → meta` (`catalog_sha256` +
+`generated_at`); the page header shows "updated … · catalog …", and
+`--check` compares the stamp against the current catalog, so a stale
+site is detectable without rebuilding. Re-publish whenever the
+catalog changes. Enable Pages with `Settings → Pages → Deploy from
+branch → docs/` **on the data repo**
+(`https://<user>.github.io/music-catalog-masu/`).
+
+The data repo carries this code repo as a `code/` submodule, so any
+data checkout pins the exact generator version its `docs/` was built
+with. Local throwaway preview without touching the data repo:
+
+```bash
+catalog viz --out-dir /tmp/viz-preview
+python3 -m http.server -d /tmp/viz-preview 8000
+```
 
 ## Publish (v1 stub)
 

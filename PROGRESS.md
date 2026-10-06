@@ -11,6 +11,19 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-06: viz home moved to the data repo — live Pages browser
+  (`docs/graph.json` + `docs/index.html`, 802 nodes/1793 edges) is
+  generated natively from `music-catalog-masu/state/catalog.json` via
+  `bash scripts/publish-viz.sh`; data repo carries this repo as a
+  `code/` submodule (pinned generator); exports stamp
+  `graph.meta` (`catalog_sha256` + `generated_at`, shown in the page
+  header) and `catalog viz --out-dir <docs> --check` exits 1 when
+  stale. Code-repo `docs/graph.json`+`index.html` removed (gitignored
+  previews). Verified stdlib-only (no pytest/pip here): unit checks +
+  render/check/stale exits + http serve OK. Next: run `pytest` where
+  available, enable Pages on the data repo (Settings → Pages → docs/),
+  then phase B (MusicBrainz + Wikidata no-key enrichment).
+
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,
   845 nodes/1898 edges, acronym-in-circle, hover focus + info panel,

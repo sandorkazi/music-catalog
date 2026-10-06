@@ -58,7 +58,8 @@ catalog artist dismiss <id1> <id2>            # reject a merge candidate
 catalog gaps [--source spotify]               # artists with < 2 tracks
 catalog candidates <artist> --pool pool.json  # popular-but-dissimilar 2-pick
 catalog similar <id> --by artist|track [--least]  # similarity query
-catalog viz --out-dir docs                    # artist similarity browser (graph.json + index.html)
+catalog viz --out-dir /tmp/viz-preview      # throwaway similarity browser (graph.json + index.html)
+bash scripts/publish-viz.sh              # publish the live browser into the data repo docs/
 catalog tags set/show/review/taxonomy         # curated genre/subgenre/instrument tags
 catalog publish --to youtube|spotify|both --dry-run  # v1: preview only
 ```

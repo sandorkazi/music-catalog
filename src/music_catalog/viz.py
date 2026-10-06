@@ -10,10 +10,16 @@ Hover shows labels (SVG <title>), click fills an inspect panel
 (inline vanilla JS, no CDN — offline-capable).
 
 ``build_graph`` / ``render_site`` power the GitHub Pages browser
-(``catalog viz --out-dir docs/``): a kNN similarity graph
+(``catalog viz --out-dir <data-repo>/docs``): a kNN similarity graph
 (nodes = in-catalog artists with acronym-in-circle placeholders,
 edges = top-k nearest neighbours) rendered with vis-network
 (force layout, zoom, hover info panel, filters) from ``graph.json``.
+
+The live site lives in the *data* repo (``docs/graph.json`` +
+``docs/index.html``), generated natively from that repo's own
+``state/catalog.json``. Every export stamps ``graph.meta`` with the
+catalog fingerprint + timestamp, so ``catalog viz --check`` can tell
+whether the published site went stale.
 """
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ import json
 import math
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .candidates import _genres, _numbers, cosine_sim, jaccard
@@ -287,6 +294,17 @@ def color_for(artist_id: str) -> str:
     return f"hsl({h % 360}, 55%, 72%)"
 
 
+def catalog_fingerprint(catalog: dict) -> str:
+    """Stable sha256 over the loaded catalog (canonical JSON, sorted keys).
+
+    Same input dict → same fingerprint, so ``render_site`` can stamp an
+    export and ``--check`` can later tell whether the catalog moved on.
+    """
+    canonical = json.dumps(catalog, sort_keys=True, ensure_ascii=False,
+                           separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     """kNN similarity graph over in-catalog artists (tracks >= 1).
 
@@ -360,7 +378,7 @@ footer{color:#666;font-size:.8em;margin:1em 0 2em}
 <div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
 <aside id="info"><h2>Artist info</h2><p>Hover a circle to preview, click to pin. Scroll to zoom, drag to pan.</p></aside>
 </div>
-<footer>Metadata (names, counts) from the curated catalog. No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
+<footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
 <script src="__VIS_CDN__"></script>
 <script>
 var ALL = null, network = null, nodes = null, edges = null, pinned = null;
@@ -419,7 +437,13 @@ fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r
     document.getElementById("f-source").appendChild(o);
   });
   document.getElementById("counts").textContent =
-    g.nodes.length+" artists, "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded).";
+    g.nodes.length+" artists, "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded). "+freshnessLine(g.meta||{});
+function freshnessLine(meta){
+  var bits = [];
+  if(meta.generated_at) bits.push("updated "+meta.generated_at);
+  if(meta.catalog_sha256) bits.push("catalog "+String(meta.catalog_sha256).slice(0,8));
+  return bits.length ? "("+bits.join(" · ")+")" : "(no freshness stamp — regenerate the export)";
+}
   var vNodes = g.nodes.map(function(n,i){
     return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
       shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
@@ -468,14 +492,22 @@ fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r
 
 
 def render_site(catalog: dict, out_dir: str | Path,
-                title: str = "Music catalog — artist similarity browser") -> dict:
+                title: str = "Music catalog — artist similarity browser",
+                catalog_sha: str | None = None) -> dict:
     """Export the GitHub Pages site: ``graph.json`` + ``index.html``.
 
-    Returns ``{"dir": ..., "nodes": ..., "edges": ..., "excluded_zero_track": ...}``.
+    The export is stamped with ``meta`` (catalog fingerprint +
+    generation time) so staleness is checkable without rebuilding.
+    Returns ``{"dir": ..., "nodes": ..., "edges": ..., "excluded_zero_track": ...,
+    "catalog_sha256": ..., "generated_at": ...}``.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     graph = build_graph(catalog)
+    sha = catalog_sha or catalog_fingerprint(catalog)
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    graph["meta"] = {"catalog_sha256": sha, "generated_at": generated_at,
+                     "generator": "music-catalog-viz"}
     with open(out / "graph.json", "w", encoding="utf-8") as f:
         json.dump(graph, f, ensure_ascii=False, indent=1)
     page = SITE_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__VIS_CDN__", VIS_CDN)
@@ -483,5 +515,6 @@ def render_site(catalog: dict, out_dir: str | Path,
         f.write(page)
     return {"dir": str(out), "nodes": len(graph["nodes"]),
             "edges": len(graph["edges"]),
-            "excluded_zero_track": graph["excluded_zero_track"]}
+            "excluded_zero_track": graph["excluded_zero_track"],
+            "catalog_sha256": sha, "generated_at": generated_at}
 
