@@ -48,6 +48,15 @@ def test_build_graph_knn_and_exclusion():
         assert e["a"] in ids and e["b"] in ids and e["a"] != e["b"]
 
 
+def test_build_graph_positions_precomputed_and_deterministic():
+    g1 = build_graph(_catalog(), k=2)
+    g2 = build_graph(_catalog(), k=2)
+    for n in g1["nodes"]:
+        assert isinstance(n["x"], float) and isinstance(n["y"], float)
+    assert [(n["id"], n["x"], n["y"]) for n in g1["nodes"]] == \
+        [(n["id"], n["x"], n["y"]) for n in g2["nodes"]]
+
+
 def test_render_site_writes_graph_and_page(tmp_path):
     summary = render_site(_catalog(), tmp_path / "site")
     assert summary["nodes"] == 3

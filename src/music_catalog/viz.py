@@ -308,7 +308,9 @@ def catalog_fingerprint(catalog: dict) -> str:
 def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     """kNN similarity graph over in-catalog artists (tracks >= 1).
 
-    Nodes carry ``{id, name, acronym, color, tracks, pop, sources}``;
+    Nodes carry ``{id, name, acronym, color, tracks, pop, sources, x, y}``;
+    ``x``/``y`` is a precomputed PCA layout (same projection as the
+    static maps) so the page renders instantly with physics off;
     edges are undirected deduped ``{a, b, dist}`` pairs to the ``k``
     nearest neighbours by :func:`artist_distance` (same vectors the
     CLI ``similar`` query uses, so page and CLI agree). Zero-track
@@ -318,8 +320,13 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     artists = [a for a in catalog.get("artists", []) if a.get("status", "ok") == "ok"]
     vecs = {a["id"]: artist_vector(catalog, a["id"]) for a in artists}
     in_catalog = [a for a in artists if vecs[a["id"]]["count"] >= 1]
+    # Precomputed layout: same PCA projection the static maps use, so the
+    # browser renders instantly instead of running force physics on load.
+    # Positions are deterministic for a given catalog.
+    pos = _norm(project([vecs[a["id"]] for a in in_catalog]),
+                w=1600.0, h=1000.0, pad=60.0)
     nodes = []
-    for a in in_catalog:
+    for (x, y), a in zip(pos, in_catalog):
         v = vecs[a["id"]]
         mine = [t for t in catalog.get("tracks", []) if t.get("artist_id") == a["id"]]
         sources = sorted({t.get("source", "?") for t in mine})
@@ -331,6 +338,8 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
             "tracks": v["count"],
             "pop": round(v["pop"], 1),
             "sources": sources,
+            "x": round(x, 1),
+            "y": round(y, 1),
         })
     seen: set[tuple[str, str]] = set()
     edges = []
@@ -372,11 +381,12 @@ footer{color:#666;font-size:.8em;margin:1em 0 2em}
 <label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
 <label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
 <label><input id="f-edges" type="checkbox" checked> edges</label>
+<label title="Re-run the force layout in your browser (slow on large graphs)"><input id="f-phys" type="checkbox"> physics</label>
 <button id="f-reset">Reset</button>
 </div>
 <div id="layout">
 <div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
-<aside id="info"><h2>Artist info</h2><p>Hover a circle to preview, click to pin. Scroll to zoom, drag to pan.</p></aside>
+<aside id="info"><h2>Artist info</h2><p>Hover a circle to preview, click to pin. Scroll to zoom, drag to pan. Layout is precomputed — tick physics to re-spread.</p></aside>
 </div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
 <script src="__VIS_CDN__"></script>
@@ -447,18 +457,21 @@ function freshnessLine(meta){
   var vNodes = g.nodes.map(function(n,i){
     return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
       shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
-      font:{size:14,face:"sans-serif"}};
+      x:n.x,y:n.y,font:{size:14,face:"sans-serif"}};
   });
   var vEdges = g.edges.map(function(e,i){
     return {id:"e"+i,from:e.a,to:e.b,value:Math.max(0.2,1.2-e.dist),
-      color:{opacity:1},smooth:{type:"continuous"}};
+      color:{opacity:1},smooth:false};
   });
   g.edges.forEach(function(e,i){e.id="e"+i;});
   nodes = new vis.DataSet(vNodes); edges = new vis.DataSet(vEdges);
   network = new vis.Network(document.getElementById("network"),{nodes:nodes,edges:edges},{
-    physics:{solver:"barnesHut",barnesHut:{gravitationalConstant:-4000,springLength:120,avoidOverlap:0.3},stabilization:{iterations:300}},
-    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,multiselect:false},
-    nodes:{borderWidth:1}
+    physics:{enabled:false,solver:"barnesHut",barnesHut:{gravitationalConstant:-4000,springLength:120,avoidOverlap:0.3},stabilization:{enabled:true,iterations:150}},
+    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,multiselect:false,hideEdgesOnDrag:true},
+    nodes:{borderWidth:1},edges:{smooth:false}
+  });
+  document.getElementById("f-phys").addEventListener("change",function(ev){
+    network.setOptions({physics:{enabled:ev.target.checked}});
   });
   network.on("hoverNode",function(p){showInfo(p.node);highlight(p.node);network.focus(p.node,{scale:1.6,animation:{duration:400}});});
   network.on("blurNode",function(){if(!pinned)clearHighlight();});
@@ -480,7 +493,9 @@ function freshnessLine(meta){
     document.getElementById("q").value="";document.getElementById("f-source").value="";
     document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
     document.getElementById("f-pop-v").textContent="0";
-    document.getElementById("f-edges").checked=true;applyFilters();
+    document.getElementById("f-edges").checked=true;
+    document.getElementById("f-phys").checked=false;
+    network.setOptions({physics:{enabled:false}});applyFilters();
   });
 }).catch(function(err){
   document.getElementById("counts").textContent =

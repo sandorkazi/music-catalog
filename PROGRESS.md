@@ -23,6 +23,11 @@ Log: last green commit + next box here on every stop.
   render/check/stale exits + http serve OK. Next: run `pytest` where
   available, enable Pages on the data repo (Settings → Pages → docs/),
   then phase B (MusicBrainz + Wikidata no-key enrichment).
+- 2026-10-06: viz loads instantly now — node positions precomputed at
+  export (PCA layout into `graph.json` x/y, physics off by default
+  with an opt-in toggle, straight edges, hidden-edges-on-drag).
+  Republished to the data repo; `--check` still fresh (fingerprint
+  covers catalog data, not layout, so the stamp stayed valid).
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,

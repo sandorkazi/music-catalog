@@ -132,7 +132,10 @@ The live artist-similarity browser is served from the **data repo**:
 `artist_distance` the CLI `similar` query uses) plus `docs/index.html`
 (vis-network via CDN: force layout, wheel-zoom, hover → neighbourhood
 highlight + camera focus + info panel, click to pin, filters for
-search/source/track-count/popularity). Nodes are acronym-in-circle
+search/source/track-count/popularity). Node positions are precomputed
+at export (same PCA projection as the static maps), so the page
+renders instantly with physics off — tick the physics box to
+re-spread the layout in-browser. Nodes are acronym-in-circle
 placeholders — no artwork is hosted or copied. The export is generated
 **natively from that repo's own `state/catalog.json`** — no data is
 duplicated across repos; the code repo only provides the generator.
