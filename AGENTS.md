@@ -10,8 +10,12 @@ Open opencode in this repo. Data lives in the sibling checkout
   (`.gitignore` already excludes `state/`).
 - Data repo (`../music-catalog-masu`): all state under `state/`
   (`catalog.json`, `review.json`, `snapshots/`). Raw dumps go to `extra/`.
-  Never commit code there. Secrets never in either repo
-  (env / `*.local.json` only, both git-ignored).
+  The live Pages browser lives in `docs/` (`graph.json` + `index.html`,
+  generated natively from `state/` via `bash scripts/publish-viz.sh`;
+  freshness via `graph.json → meta` + `catalog viz --out-dir docs --check`).
+  No hand-written code there — only exception is the generated `docs/`
+  site plus the `code/` submodule pinning this repo's generator.
+  Secrets never in either repo (env / `*.local.json` only, both git-ignored).
 - Data-dir resolution (first existing wins): `$MUSIC_CATALOG_DATA_DIR`,
   then sibling `../music-catalog-masu`
   (see `src/music_catalog/data.py:resolve_data_dir`). No env needed

@@ -9,3 +9,6 @@ htmlcov/
 .coverage
 *.local.json
 state/
+# local viz previews (the live site is published into the data repo docs/)
+docs/graph.json
+docs/index.html

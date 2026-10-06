@@ -11,6 +11,33 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-06: viz home moved to the data repo — live Pages browser
+  (`docs/graph.json` + `docs/index.html`, 802 nodes/1793 edges) is
+  generated natively from `music-catalog-masu/state/catalog.json` via
+  `bash scripts/publish-viz.sh`; data repo carries this repo as a
+  `code/` submodule (pinned generator); exports stamp
+  `graph.meta` (`catalog_sha256` + `generated_at`, shown in the page
+  header) and `catalog viz --out-dir <docs> --check` exits 1 when
+  stale. Code-repo `docs/graph.json`+`index.html` removed (gitignored
+  previews). Verified stdlib-only (no pytest/pip here): unit checks +
+  render/check/stale exits + http serve OK. Next: run `pytest` where
+  available, enable Pages on the data repo (Settings → Pages → docs/),
+  then phase B (MusicBrainz + Wikidata no-key enrichment).
+- 2026-10-06: viz loads instantly now — node positions precomputed at
+  export (PCA layout into `graph.json` x/y, physics off by default
+  with an opt-in toggle, straight edges, hidden-edges-on-drag).
+  Republished to the data repo; `--check` still fresh (fingerprint
+  covers catalog data, not layout, so the stamp stayed valid).
+- 2026-10-06: degree cap (MAX_DEGREE=20, fair round-robin admission
+  over tie-aware pools) + genre clusters (`cluster` per node,
+  `clusters` with stored centers, bubble open-on-click,
+  Expand/Collapse all). Real data: max deg 174→20, 0 isolated
+  (was 113 with strict top-k), 802 nodes/3952 edges, build 0.5 s.
+  Honest finding: catalog has 0 genre tags + 0 audio features, so all
+  802 artists sit in `unknown` (stays flat, not bubbled) until
+  `catalog tags set` curation or phase-B enrichment fills genres —
+  bubbles then appear automatically on republish.
+
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,
   845 nodes/1898 edges, acronym-in-circle, hover focus + info panel,
