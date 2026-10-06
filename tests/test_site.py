@@ -1,6 +1,14 @@
 """Tests for the github.io graph exporter (viz.build_graph/render_site)."""
 from music_catalog.store import empty_catalog
-from music_catalog.viz import acronym_for, build_graph, catalog_fingerprint, color_for, render_site
+from music_catalog.viz import (
+    MAX_DEGREE,
+    acronym_for,
+    build_graph,
+    catalog_fingerprint,
+    cluster_for,
+    color_for,
+    render_site,
+)
 
 
 def _catalog():
@@ -55,6 +63,52 @@ def test_build_graph_positions_precomputed_and_deterministic():
         assert isinstance(n["x"], float) and isinstance(n["y"], float)
     assert [(n["id"], n["x"], n["y"]) for n in g1["nodes"]] == \
         [(n["id"], n["x"], n["y"]) for n in g2["nodes"]]
+
+
+def _hub_farm(n=30):
+    """Identical vectors -> total distance ties -> mega-hub without a cap."""
+    c = empty_catalog()
+    c["artists"] = [{"id": f"a{i:02d}", "name": f"Band {i}",
+                     "aliases": [], "status": "ok"} for i in range(n)]
+    c["tracks"] = [{"id": f"t{i:02d}", "artist_id": f"a{i:02d}",
+                    "title": "Same", "source": "spotify", "popularity": 50,
+                    "features": {}, "genres": []} for i in range(n)]
+    return c
+
+
+def test_max_degree_cap():
+    from collections import Counter
+    g = build_graph(_hub_farm(), k=3)
+    deg = Counter()
+    for e in g["edges"]:
+        deg[e["a"]] += 1
+        deg[e["b"]] += 1
+    assert max(deg.values()) <= MAX_DEGREE == 20
+    assert set(deg) == {f"a{i:02d}" for i in range(30)}  # nobody isolated
+    g2 = build_graph(_hub_farm(), k=3)
+    assert g["edges"] == g2["edges"]
+
+
+def test_cluster_for_rolls_up_and_defaults():
+    assert cluster_for({"shaabi", "pop"}) in ("arabic", "pop")  # vote, deterministic
+    assert cluster_for({"shaabi"}) == "arabic"  # subgenre -> parent
+    assert cluster_for({"pop"}) == "pop"  # top-level stays
+    assert cluster_for({"zz-not-a-genre"}) == "other"
+    assert cluster_for(set()) == "unknown"
+
+
+def test_build_graph_clusters_cover_nodes_with_stored_centers():
+    g1 = build_graph(_catalog(), k=2)
+    ids = {c["id"] for c in g1["clusters"]}
+    assert {n["cluster"] for n in g1["nodes"]} <= ids
+    by_id = {n["id"]: n for n in g1["nodes"]}
+    for c in g1["clusters"]:
+        members = [by_id[n["id"]] for n in g1["nodes"] if n["cluster"] == c["id"]]
+        assert c["count"] == len(members) >= 1
+        assert c["x"] == round(sum(m["x"] for m in members) / len(members), 1)
+        assert c["y"] == round(sum(m["y"] for m in members) / len(members), 1)
+    g2 = build_graph(_catalog(), k=2)
+    assert g1["clusters"] == g2["clusters"]
 
 
 def test_render_site_writes_graph_and_page(tmp_path):

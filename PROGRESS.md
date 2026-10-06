@@ -28,6 +28,15 @@ Log: last green commit + next box here on every stop.
   with an opt-in toggle, straight edges, hidden-edges-on-drag).
   Republished to the data repo; `--check` still fresh (fingerprint
   covers catalog data, not layout, so the stamp stayed valid).
+- 2026-10-06: degree cap (MAX_DEGREE=20, fair round-robin admission
+  over tie-aware pools) + genre clusters (`cluster` per node,
+  `clusters` with stored centers, bubble open-on-click,
+  Expand/Collapse all). Real data: max deg 174→20, 0 isolated
+  (was 113 with strict top-k), 802 nodes/3952 edges, build 0.5 s.
+  Honest finding: catalog has 0 genre tags + 0 audio features, so all
+  802 artists sit in `unknown` (stays flat, not bubbled) until
+  `catalog tags set` curation or phase-B enrichment fills genres —
+  bubbles then appear automatically on republish.
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,

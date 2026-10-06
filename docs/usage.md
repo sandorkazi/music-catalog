@@ -135,7 +135,13 @@ highlight + camera focus + info panel, click to pin, filters for
 search/source/track-count/popularity). Node positions are precomputed
 at export (same PCA projection as the static maps), so the page
 renders instantly with physics off — tick the physics box to
-re-spread the layout in-browser. Nodes are acronym-in-circle
+re-spread the layout in-browser. Edges are degree-capped at 20 per
+node (closest-first, tie-aware pools so no artist is starved behind
+a hub); artists start grouped in genre-cluster bubbles (precomputed
+centers, stored in the export) — click a bubble to open it, or use
+Expand all / Collapse all. Untagged artists stay flat until tags
+land: bubbles appear automatically as `catalog tags set` curation
+(or a future enrichment pass) fills genres in. Nodes are acronym-in-circle
 placeholders — no artwork is hosted or copied. The export is generated
 **natively from that repo's own `state/catalog.json`** — no data is
 duplicated across repos; the code repo only provides the generator.
