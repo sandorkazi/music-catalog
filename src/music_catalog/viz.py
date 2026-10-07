@@ -166,6 +166,45 @@ def _norm(pts: list[tuple[float, float]], w: float = 760.0, h: float = 460.0, pa
     return [(pad + (x - min(xs)) / sx * (w - 2 * pad), pad + (y - min(ys)) / sy * (h - 2 * pad)) for x, y in pts]
 
 
+def _spread(pts: list[tuple[float, float]], min_gap: float = 30.0) -> list[tuple[float, float]]:
+    """Deterministic de-collision for stacked layout points.
+
+    Points are placed in sorted order; each new point keeps its PCA
+    position unless another placed point is closer than ``min_gap``,
+    in which case it walks outward along a deterministic golden-angle
+    spiral until clear. Same input → same output, so the stored
+    layout stays stable across exports.
+    """
+    placed: list[tuple[float, float]] = []
+    grid: dict[tuple[int, int], list[int]] = {}
+    out: list[tuple[float, float] | None] = [None] * len(pts)
+
+    def too_close(x: float, y: float) -> bool:
+        cx, cy = math.floor(x / min_gap), math.floor(y / min_gap)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j in grid.get((cx + dx, cy + dy), ()):
+                    px, py = placed[j]
+                    if (px - x) ** 2 + (py - y) ** 2 < min_gap * min_gap:
+                        return True
+        return False
+
+    for i in sorted(range(len(pts)), key=lambda i: (pts[i][0], pts[i][1], i)):
+        x, y = pts[i]
+        h = int(hashlib.md5(f"spread-{i}".encode()).hexdigest()[:8], 16)
+        ang = (h % 360) * math.pi / 180.0
+        step = 0
+        while too_close(x, y) and step < 500:
+            step += 1
+            ang += math.pi * (3.0 - math.sqrt(5.0))
+            x = pts[i][0] + math.cos(ang) * min_gap * step * 0.5
+            y = pts[i][1] + math.sin(ang) * min_gap * step * 0.5
+        placed.append((x, y))
+        out[i] = (x, y)
+        grid.setdefault((math.floor(x / min_gap), math.floor(y / min_gap)), []).append(len(placed) - 1)
+    return [p for p in out if p is not None]
+
+
 def artist_distance(a: dict, b: dict) -> float:
     """0 (identical) .. ~1.3 (far): cosine gap on features + genre gap."""
     feat = 1.0 - cosine_sim(a["features"], b["features"])
@@ -352,11 +391,12 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     artists = [a for a in catalog.get("artists", []) if a.get("status", "ok") == "ok"]
     vecs = {a["id"]: artist_vector(catalog, a["id"]) for a in artists}
     in_catalog = [a for a in artists if vecs[a["id"]]["count"] >= 1]
-    # Precomputed layout: same PCA projection the static maps use, so the
-    # browser renders instantly instead of running force physics on load.
-    # Positions are deterministic for a given catalog.
-    pos = _norm(project([vecs[a["id"]] for a in in_catalog]),
-                w=1600.0, h=1000.0, pad=60.0)
+    # Precomputed layout: same PCA projection the static maps use, plus a
+    # deterministic de-collision pass, so the browser renders instantly
+    # with every node frozen in place. Positions are stable for a given
+    # catalog.
+    pos = _spread(_norm(project([vecs[a["id"]] for a in in_catalog]),
+                        w=1600.0, h=1000.0, pad=60.0))
     nodes = []
     for i, ((x, y), a) in enumerate(zip(pos, in_catalog)):
         v = vecs[a["id"]]
@@ -453,14 +493,13 @@ footer{color:#666;font-size:.8em;margin:1em 0 2em}
 <label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
 <label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
 <label><input id="f-edges" type="checkbox" checked> edges</label>
-<label title="Re-run the force layout in your browser (slow on large graphs)"><input id="f-phys" type="checkbox"> physics</label>
 <button id="f-expand" title="Open every genre bubble">Expand all</button>
 <button id="f-collapse" title="Collapse back to genre bubbles">Collapse all</button>
 <button id="f-reset">Reset</button>
 </div>
 <div id="layout">
 <div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
-<aside id="info"><h2>Artist info</h2><p>Artists start grouped in genre bubbles — click a bubble to open it. Hover a circle to preview, click to pin. Scroll to zoom, drag to pan. Layout is precomputed; tick physics to re-spread.</p></aside>
+<aside id="info"><h2>Artist info</h2><p>Artists start grouped in genre bubbles — click a bubble to open it. Hover a circle to preview, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
 </div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
 <script src="__VIS_CDN__"></script>
@@ -486,35 +525,62 @@ function passFilters(n){
   if(q && n.name.toLowerCase().indexOf(q)<0) return false;
   return true;
 }
+var DIM = {}; // id -> true while filtered out (transparent + unclickable, never moved)
+var HL = null; // {nodes:{}, edges:{}} neighbourhood currently lit, or null
+var SHOW_E = true;
+var HOVERED = null;
+function baseNodeOpacity(id){return (DIM[id]||(HL&&!HL.nodes[id]))?0.15:1;}
+function baseEdgeOpacity(e){return (!SHOW_E||DIM[e.a]||DIM[e.b]||(HL&&!HL.edges[e.id]))?0.08:1;}
+function paintNodes(ids){
+  nodes.update(ids.map(function(id){return {id:id,opacity:baseNodeOpacity(id)};}));
+}
+function paintEdges(ids){
+  edges.update(ids.map(function(id){
+    var e = ALL.edges.filter(function(x){return x.id===id;})[0];
+    return {id:id,color:{opacity:baseEdgeOpacity(e)}};
+  }));
+}
+function allNodeIds(){return ALL.nodes.map(function(n){return n.id;});}
+function allEdgeIds(){return ALL.edges.map(function(e){return e.id;});}
 function applyFilters(){
   var filtering = document.getElementById("q").value.trim() !== "" ||
     document.getElementById("f-source").value !== "" ||
     document.getElementById("f-tracks").value !== "1" ||
     document.getElementById("f-pop").value !== "0";
   if(filtering) expandAll();
-  var vis = ALL.nodes.filter(passFilters).map(function(n){return n.id;});
-  var visSet = {}; vis.forEach(function(id){visSet[id]=true;});
-  nodes.get().forEach(function(n){nodes.update({id:n.id,hidden:!visSet[n.id]});});
-  var showE = document.getElementById("f-edges").checked;
-  edges.get().forEach(function(e){
-    var edge = ALL.edges.filter(function(x){return x.id===e.id;})[0];
-    edges.update({id:e.id,hidden:!showE||!visSet[edge.a]||!visSet[edge.b]});
-  });
+  DIM = {};
+  ALL.nodes.filter(function(n){return !passFilters(n);}).forEach(function(n){DIM[n.id]=true;});
+  SHOW_E = document.getElementById("f-edges").checked;
+  paintNodes(allNodeIds());
+  paintEdges(allEdgeIds());
 }
-function highlight(id){
-  var connected = {}; connected[id]=true;
-  network.getConnectedNodes(id).forEach(function(x){connected[x]=true;});
-  nodes.get().forEach(function(n){
-    nodes.update({id:n.id,opacity:connected[n.id]?1:0.15});
-  });
-  edges.get().forEach(function(e){
-    var edge = ALL.edges.filter(function(x){return x.id===e.id;})[0];
-    edges.update({id:e.id,color:{opacity:(edge.a===id||edge.b===id)?1:0.08}});
-  });
+function setHL(id){
+  var oldN = HL?Object.keys(HL.nodes):[];
+  var oldE = HL?Object.keys(HL.edges):[];
+  HL = null;
+  if(id){
+    var nb = {}; nb[id]=true;
+    network.getConnectedNodes(id).forEach(function(x){nb[x]=true;});
+    var eb = {};
+    ALL.edges.forEach(function(e){if(e.a===id||e.b===id) eb[e.id]=true;});
+    HL = {nodes:nb,edges:eb};
+  }
+  var nn = HL?Object.keys(HL.nodes):[];
+  var ne = HL?Object.keys(HL.edges):[];
+  paintNodes(oldN.concat(nn).filter(function(v,i,a){return a.indexOf(v)===i;}));
+  paintEdges(oldE.concat(ne).filter(function(v,i,a){return a.indexOf(v)===i;}));
 }
-function clearHighlight(){
-  nodes.get().forEach(function(n){nodes.update({id:n.id,opacity:1});});
-  edges.get().forEach(function(e){edges.update({id:e.id,color:{opacity:1}});});
+function highlight(id){setHL(id);}
+function clearHighlight(){setHL(null);}
+function setWiggle(id){
+  if(HOVERED&&HOVERED!==id) nodes.update({id:HOVERED,borderWidth:HOVERED===pinned?3:1});
+  HOVERED = id;
+  if(id) nodes.update({id:id,borderWidth:3});
+}
+function setPinned(id){
+  if(pinned&&pinned!==id&&pinned!==HOVERED) nodes.update({id:pinned,borderWidth:1});
+  pinned = id;
+  if(id) nodes.update({id:id,borderWidth:3});
 }
 function showInfo(id){
   if(String(id).indexOf("cluster:")===0){
@@ -560,7 +626,7 @@ function freshnessLine(meta){
   var vNodes = g.nodes.map(function(n,i){
     return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
       shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
-      x:n.x,y:n.y,cl:n.cluster,font:{size:14,face:"sans-serif"}};
+      x:n.x,y:n.y,cl:n.cluster,fixed:{x:true,y:true},font:{size:14,face:"sans-serif"}};
   });
   var vEdges = g.edges.map(function(e,i){
     return {id:"e"+i,from:e.a,to:e.b,value:Math.max(0.2,1.2-e.dist),
@@ -569,26 +635,28 @@ function freshnessLine(meta){
   g.edges.forEach(function(e,i){e.id="e"+i;});
   nodes = new vis.DataSet(vNodes); edges = new vis.DataSet(vEdges);
   network = new vis.Network(document.getElementById("network"),{nodes:nodes,edges:edges},{
-    physics:{enabled:false,solver:"barnesHut",barnesHut:{gravitationalConstant:-4000,springLength:120,avoidOverlap:0.3},stabilization:{enabled:true,iterations:150}},
-    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,multiselect:false,hideEdgesOnDrag:true},
+    physics:{enabled:false},
+    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,dragNodes:false,multiselect:false,hideEdgesOnDrag:true},
     nodes:{borderWidth:1},edges:{smooth:false}
   });
-  document.getElementById("f-phys").addEventListener("change",function(ev){
-    network.setOptions({physics:{enabled:ev.target.checked}});
+  network.on("hoverNode",function(p){
+    if(DIM[p.node]) return;
+    showInfo(p.node);setHL(p.node);setWiggle(p.node);
   });
-  network.on("hoverNode",function(p){showInfo(p.node);highlight(p.node);network.focus(p.node,{scale:1.6,animation:{duration:400}});});
-  network.on("blurNode",function(){if(!pinned)clearHighlight();});
+  network.on("blurNode",function(p){setWiggle(null);if(!pinned)clearHighlight();});
   network.on("click",function(p){
     if(p.nodes.length){
       var cid = String(p.nodes[0]);
       if(cid.indexOf("cluster:")===0){showInfo(cid);network.openCluster(cid);return;}
-      pinned=p.nodes[0];showInfo(pinned);highlight(pinned);
+      if(DIM[cid]) return;
+      setPinned(p.nodes[0]);showInfo(pinned);highlight(pinned);
+      network.focus(pinned,{scale:1.5,animation:false});
     }
-    else{pinned=null;clearHighlight();}
+    else{setPinned(null);clearHighlight();}
   });
   document.getElementById("info").addEventListener("click",function(ev){
     var a = ev.target.closest ? ev.target.closest("a[data-id]") : null;
-    if(a){ev.preventDefault();var id=a.getAttribute("data-id");pinned=id;showInfo(id);highlight(id);network.focus(id,{scale:1.6,animation:{duration:400}});network.selectNodes([id]);}
+    if(a){ev.preventDefault();var id=a.getAttribute("data-id");if(DIM[id])return;setPinned(id);showInfo(id);highlight(id);network.focus(id,{scale:1.5,animation:false});network.selectNodes([id]);}
   });
   ["q","f-source","f-tracks","f-pop","f-edges"].forEach(function(id){
     document.getElementById(id).addEventListener("input",function(){
@@ -601,8 +669,7 @@ function freshnessLine(meta){
     document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
     document.getElementById("f-pop-v").textContent="0";
     document.getElementById("f-edges").checked=true;
-    document.getElementById("f-phys").checked=false;
-    network.setOptions({physics:{enabled:false}});applyFilters();collapseAll();
+    applyFilters();collapseAll();
   });
   document.getElementById("f-expand").addEventListener("click",function(){expandAll();});
   document.getElementById("f-collapse").addEventListener("click",function(){collapseAll();});

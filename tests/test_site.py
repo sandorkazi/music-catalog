@@ -140,3 +140,27 @@ def test_render_site_stamps_meta(tmp_path):
     assert g["meta"]["generated_at"]
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
     assert "freshnessLine" in page and "catalog_sha256" in page
+
+
+def test_spread_separates_stacks_deterministically():
+    from music_catalog.viz import _spread
+    import math
+    stacked = [(100.0, 100.0)] * 10 + [(500.0, 500.0)]
+    a = _spread(stacked)
+    b = _spread(stacked)
+    assert a == b  # deterministic
+    for i in range(10):
+        for j in range(i + 1, 10):
+            dx, dy = a[i][0] - a[j][0], a[i][1] - a[j][1]
+            assert math.hypot(dx, dy) >= 30.0 - 1e-9
+    assert a[10] == (500.0, 500.0)  # isolated point untouched
+
+
+def test_rendered_page_freezes_nodes_and_dims_on_filter(tmp_path):
+    summary = render_site(_catalog(), tmp_path / "site")
+    page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
+    assert "fixed:{x:true,y:true}" in page
+    assert "dragNodes:false" in page
+    assert "f-phys" not in page
+    for marker in ("setHL", "setPinned", "setWiggle", "DIM", "expandAll", "collapseAll"):
+        assert marker in page, marker

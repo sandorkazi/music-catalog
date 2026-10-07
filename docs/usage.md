@@ -139,7 +139,10 @@ re-spread the layout in-browser. Edges are degree-capped at 20 per
 node (closest-first, tie-aware pools so no artist is starved behind
 a hub); artists start grouped in genre-cluster bubbles (precomputed
 centers, stored in the export) — click a bubble to open it, or use
-Expand all / Collapse all. Untagged artists stay flat until tags
+Expand all / Collapse all. Every node is frozen at its stored
+position (export also de-collides overlaps): filters only fade
+non-matches to transparent + unclickable, nothing ever moves.
+Untagged artists stay flat until tags
 land: bubbles appear automatically as `catalog tags set` curation
 (or a future enrichment pass) fills genres in. Nodes are acronym-in-circle
 placeholders — no artwork is hosted or copied. The export is generated

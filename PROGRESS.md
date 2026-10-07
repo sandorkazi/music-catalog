@@ -37,6 +37,13 @@ Log: last green commit + next box here on every stop.
   802 artists sit in `unknown` (stays flat, not bubbled) until
   `catalog tags set` curation or phase-B enrichment fills genres —
   bubbles then appear automatically on republish.
+- 2026-10-06: page frozen + fast — nodes `fixed` at stored
+  positions (physics toggle removed, node dragging off), hover does
+  one border update instead of ~4800 redraws, highlight/filter
+  paints are single batched updates, click-focus without animation;
+  filters dim non-matches (transparent + unclickable) instead of
+  hiding, positions never change; export de-collides stacks
+  (deterministic 30px spiral spread, stable across exports).
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,
