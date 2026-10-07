@@ -243,6 +243,9 @@ def test_rendered_page_freezes_nodes_and_dims_on_filter(tmp_path):
     assert "f-phys" not in page
     assert 'id="f-edges" type="checkbox"> edges' in page  # edges off by default
     assert "hidden:!document.getElementById" in page
-    for marker in ("setHL", "setPinned", "setWiggle", "DIM", "expandAll", "collapseAll",
-                   "openBubble", "collapseTop", "collapseSub", "n.top", "e.w"):
+    for marker in ("setHL", "setPinned", "setWiggle", "setHover", "DIM", "HOV_E",
+                   "expandAll", "collapseAll", "openBubble", "collapseTop",
+                   "collapseSub", "n.top", "e.w"):
         assert marker in page, marker
+    assert "showInfo(p.node);setHover(p.node);setWiggle(p.node);" in page
+    assert "setHL(p.node)" not in page  # hover must never dim the canvas

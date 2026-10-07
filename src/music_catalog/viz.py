@@ -688,12 +688,19 @@ function passFilters(n){
   return true;
 }
 var DIM = {}; // id -> true while filtered out (transparent + unclickable, never moved)
-var HL = null; // {nodes:{}, edges:{}} neighbourhood currently lit, or null
-var SHOW_E = false; // edges hidden until hover, or the edges box
+var HL = null; // {nodes:{}, edges:{}} neighbourhood of the PINNED node, or null
+var HOV_E = null; // [edge ids] incident to the hovered node (revealed preview)
+var SHOW_E = false; // edges hidden until hover/pin, or the edges box
 var HOVERED = null;
-function baseNodeOpacity(id){return (DIM[id]||(HL&&!HL.nodes[id]))?0.15:1;}
-function baseEdgeOpacity(e){return (!SHOW_E||DIM[e.a]||DIM[e.b]||(HL&&!HL.edges[e.id]))?0.08:1;}
-function baseEdgeHidden(e){return !SHOW_E&&!(HL&&HL.edges[e.id]);}
+function baseNodeOpacity(id){return (DIM[id]||(HL&&!HL.nodes[id]))?0.25:1;}
+function baseEdgeOpacity(e){
+  if(HOV_E&&HOV_E.indexOf(e.id)>=0) return 1;
+  return (!SHOW_E||DIM[e.a]||DIM[e.b]||(HL&&!HL.edges[e.id]))?0.08:1;
+}
+function baseEdgeHidden(e){
+  if(HOV_E&&HOV_E.indexOf(e.id)>=0) return false;
+  return !SHOW_E&&!(HL&&HL.edges[e.id]);
+}
 function paintNodes(ids){
   nodes.update(ids.map(function(id){return {id:id,opacity:baseNodeOpacity(id)};}));
 }
@@ -718,8 +725,9 @@ function applyFilters(){
   paintEdges(allEdgeIds());
 }
 function setHL(id){
-  var oldN = HL?Object.keys(HL.nodes):[];
-  var oldE = HL?Object.keys(HL.edges):[];
+  // Full batched repaints (two update calls = two redraws): dimming the
+  // outsiders requires touching them, so subset-only paints are wrong
+  // here. Batching keeps it fast; per-item updates were the old freeze.
   HL = null;
   if(id){
     var nb = {}; nb[id]=true;
@@ -728,13 +736,23 @@ function setHL(id){
     ALL.edges.forEach(function(e){if(e.a===id||e.b===id) eb[e.id]=true;});
     HL = {nodes:nb,edges:eb};
   }
-  var nn = HL?Object.keys(HL.nodes):[];
-  var ne = HL?Object.keys(HL.edges):[];
-  paintNodes(oldN.concat(nn).filter(function(v,i,a){return a.indexOf(v)===i;}));
-  paintEdges(oldE.concat(ne).filter(function(v,i,a){return a.indexOf(v)===i;}));
+  paintNodes(allNodeIds());
+  paintEdges(allEdgeIds());
 }
 function highlight(id){setHL(id);}
 function clearHighlight(){setHL(null);}
+function setHover(id){
+  // Hover previews incident links only — it never dims anything, so a
+  // stuck highlight can no longer fade the canvas. Click pins focus.
+  var old = HOV_E||[];
+  HOV_E = null;
+  if(id){
+    HOV_E = [];
+    ALL.edges.forEach(function(e){if(e.a===id||e.b===id) HOV_E.push(e.id);});
+  }
+  var fresh = HOV_E||[];
+  paintEdges(old.concat(fresh).filter(function(v,i,a){return a.indexOf(v)===i;}));
+}
 function setWiggle(id){
   if(HOVERED&&HOVERED!==id) nodes.update({id:HOVERED,borderWidth:HOVERED===pinned?3:1});
   HOVERED = id;
@@ -825,10 +843,12 @@ function freshnessLine(meta){
     nodes:{borderWidth:1},edges:{smooth:false}
   });
   network.on("hoverNode",function(p){
+    var id = String(p.node);
+    if(id.indexOf("cluster:")===0){showInfo(id);return;}
     if(DIM[p.node]) return;
-    showInfo(p.node);setHL(p.node);setWiggle(p.node);
+    showInfo(p.node);setHover(p.node);setWiggle(p.node);
   });
-  network.on("blurNode",function(p){setWiggle(null);if(!pinned)clearHighlight();});
+  network.on("blurNode",function(p){setHover(null);setWiggle(null);});
   network.on("click",function(p){
     if(p.nodes.length){
       var cid = String(p.nodes[0]);

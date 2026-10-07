@@ -58,6 +58,12 @@ Log: last green commit + next box here on every stop.
   1975 edges, per-edge local weight `w` (1 = both endpoints'
   closest) driving display width; similarity queries untouched
   (vectors, not edges).
+- 2026-10-06: hover no longer dims (it stuck faded once pinned —
+  blur skipped clearing while pinned). Hover = info + link preview
+  + border only; click pins the neighbourhood focus. Highlight
+  repaints are full but batched (two update calls); verified with
+  an in-browser probe: 8/8 interaction checks pass
+  (collapse/hover/pin/unpin/nested open roundtrip).
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,
