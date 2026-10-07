@@ -307,8 +307,8 @@ document.querySelectorAll("circle,rect").forEach(function(el){{
 """
 
 
-GRAPH_K = 3  # edges per artist (nearest neighbours)
-MAX_DEGREE = 20  # hard cap on edges per node (hubs keep their closest links)
+GRAPH_K = 2  # nearest-neighbour distances pooled per artist (ties included)
+MAX_DEGREE = 12  # hard cap on edges per node (hubs keep their closest links)
 VIS_CDN = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 
 
@@ -326,12 +326,6 @@ def acronym_for(name: str) -> str:
     if len(words) == 1:
         return words[0][:2].upper()
     return (words[0][0] + words[-1][0]).upper()
-
-
-def color_for(artist_id: str) -> str:
-    """Deterministic pastel fill color derived from the artist id."""
-    h = int(hashlib.md5(f"node-{artist_id}".encode()).hexdigest()[:8], 16)
-    return f"hsl({h % 360}, 55%, 72%)"
 
 
 def catalog_fingerprint(catalog: dict) -> str:
@@ -368,13 +362,65 @@ def cluster_for(genres) -> str:
     return sorted(k for k, v in votes.items() if v == top)[0]
 
 
+def genre_color(cid: str) -> str:
+    """Node fill by cluster: taxonomy hue for genres, gray otherwise.
+
+    Untagged / non-taxonomy clusters stay gray so genre color visibly
+    lights up as tags are curated, without ever inventing signal.
+    """
+    from .tags import load_taxonomy
+
+    if cid == "other" or cid.startswith("group-") or cid == "unknown":
+        return "hsl(0, 0%, 74%)"
+    genres = sorted(load_taxonomy()["genres"])
+    if cid in genres:
+        hue = round(genres.index(cid) * 360 / len(genres))
+        return f"hsl({hue}, 55%, 70%)"
+    return "hsl(0, 0%, 74%)"
+
+
+def communities(ids: list[str], edges: list[dict], max_iter: int = 50) -> dict[str, str]:
+    """Deterministic label-propagation communities over the capped graph.
+
+    Gives the browser real bubbles before any genre tags exist
+    (artists migrate to genre bubbles automatically once tagged).
+    Async update in id order, smallest-label tiebreak, fixed cap —
+    same graph + order → same communities.
+    """
+    from collections import Counter
+
+    adj: dict[str, set[str]] = {aid: set() for aid in ids}
+    for e in edges:
+        adj[e["a"]].add(e["b"])
+        adj[e["b"]].add(e["a"])
+    label = {aid: aid for aid in ids}
+    for _ in range(max_iter):
+        changed = False
+        for aid in ids:
+            if not adj[aid]:
+                continue
+            freq = Counter(label[v] for v in adj[aid])
+            top = max(freq.values())
+            best = sorted(l for l, cnt in freq.items() if cnt == top)[0]
+            if best != label[aid]:
+                label[aid] = best
+                changed = True
+        if not changed:
+            break
+    return label
+
+
 def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     """kNN similarity graph over in-catalog artists (tracks >= 1).
 
     Nodes carry ``{id, name, acronym, color, tracks, pop, sources, x, y,
     cluster}``; ``x``/``y`` is a precomputed PCA layout (same projection
-    as the static maps) so the page renders instantly with physics off;
-    ``cluster`` is the genre-cluster id (see :func:`cluster_for`).
+    as the static maps, de-collided) so the page renders instantly with
+    every node frozen in place; ``cluster`` is the genre id where tags
+    exist (see :func:`cluster_for`) else a ``group-*`` similarity
+    community from deterministic label propagation — artists migrate
+    to genre bubbles automatically once tagged. Node ``color`` follows
+    the taxonomy hue for genres, gray while untagged.
     ``clusters`` lists ``{id, label, x, y, count}`` with the center
     precomputed as the member mean — the page collapses each cluster
     into one bubble and opens it on click, all from stored positions.
@@ -406,13 +452,13 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
             "id": a["id"],
             "name": a.get("name", a["id"]),
             "acronym": acronym_for(a.get("name", "")),
-            "color": color_for(a["id"]),
+            "color": "",  # filled below once the cluster is known
             "tracks": v["count"],
             "pop": round(v["pop"], 1),
             "sources": sources,
             "x": round(x, 1),
             "y": round(y, 1),
-            "cluster": cluster_for(v["genres"]),
+            "cluster": "",
         })
     ids = [a["id"] for a in in_catalog]
     ranked: dict[str, list[tuple[float, str]]] = {}
@@ -429,7 +475,7 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     # Fair round-robin admission: each node takes its closest still-open
     # link in turn (deterministic id order). Closest-first per node, but
     # no node is starved by hubs filling up early, and no node exceeds
-    # MAX_DEGREE (over-subscribed hubs keep their 20 closest links).
+    # MAX_DEGREE (over-subscribed hubs keep their closest links).
     deg: dict[str, int] = {aid: 0 for aid in ids}
     admitted: set[tuple[str, str]] = set()
     edges = []
@@ -451,15 +497,26 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
                 edges.append({"a": key[0], "b": key[1], "dist": round(dist, 4)})
                 progress = True
                 break
+    # Hybrid clusters: genre vote where tags exist, else the label-propagation
+    # community (id "group-<label>"). Artists migrate to genre bubbles
+    # automatically once tagged; untagged artists bubble by similarity now.
+    comm = communities(ids, edges)
     by_cluster: dict[str, list[int]] = {}
     for i, n in enumerate(nodes):
-        by_cluster.setdefault(n["cluster"], []).append(i)
+        tokens = vecs[n["id"]]["genres"]
+        cid = cluster_for(tokens) if tokens else f"group-{comm[n['id']]}"
+        n["cluster"] = cid
+        n["color"] = genre_color(cid)
+        by_cluster.setdefault(cid, []).append(i)
+    group_rank = {cid: i + 1 for i, cid in
+                  enumerate(sorted((c for c in by_cluster if c.startswith("group-")),
+                                   key=lambda c: (-len(by_cluster[c]), c)))}
     clusters = []
     for cid in sorted(by_cluster):
         idx = by_cluster[cid]
         clusters.append({
             "id": cid,
-            "label": cid,
+            "label": f"Group {group_rank[cid]}" if cid in group_rank else cid,
             "x": round(sum(nodes[i]["x"] for i in idx) / len(idx), 1),
             "y": round(sum(nodes[i]["y"] for i in idx) / len(idx), 1),
             "count": len(idx),
@@ -492,14 +549,14 @@ footer{color:#666;font-size:.8em;margin:1em 0 2em}
 <label>Source <select id="f-source"><option value="">all</option></select></label>
 <label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
 <label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
-<label><input id="f-edges" type="checkbox" checked> edges</label>
+<label title="Show all similarity links (hidden until hover otherwise)"><input id="f-edges" type="checkbox"> edges</label>
 <button id="f-expand" title="Open every genre bubble">Expand all</button>
 <button id="f-collapse" title="Collapse back to genre bubbles">Collapse all</button>
 <button id="f-reset">Reset</button>
 </div>
 <div id="layout">
 <div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
-<aside id="info"><h2>Artist info</h2><p>Artists start grouped in genre bubbles — click a bubble to open it. Hover a circle to preview, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
+<aside id="info"><h2>Artist info</h2><p>Artists start grouped in similarity bubbles (genre bubbles once tagged — node colors show genre, gray means untagged). Click a bubble to open it. Hover a circle to preview its links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
 </div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
 <script src="__VIS_CDN__"></script>
@@ -527,17 +584,18 @@ function passFilters(n){
 }
 var DIM = {}; // id -> true while filtered out (transparent + unclickable, never moved)
 var HL = null; // {nodes:{}, edges:{}} neighbourhood currently lit, or null
-var SHOW_E = true;
+var SHOW_E = false; // edges hidden until hover, or the edges box
 var HOVERED = null;
 function baseNodeOpacity(id){return (DIM[id]||(HL&&!HL.nodes[id]))?0.15:1;}
 function baseEdgeOpacity(e){return (!SHOW_E||DIM[e.a]||DIM[e.b]||(HL&&!HL.edges[e.id]))?0.08:1;}
+function baseEdgeHidden(e){return !SHOW_E&&!(HL&&HL.edges[e.id]);}
 function paintNodes(ids){
   nodes.update(ids.map(function(id){return {id:id,opacity:baseNodeOpacity(id)};}));
 }
 function paintEdges(ids){
   edges.update(ids.map(function(id){
     var e = ALL.edges.filter(function(x){return x.id===id;})[0];
-    return {id:id,color:{opacity:baseEdgeOpacity(e)}};
+    return {id:id,color:{opacity:baseEdgeOpacity(e)},hidden:baseEdgeHidden(e)};
   }));
 }
 function allNodeIds(){return ALL.nodes.map(function(n){return n.id;});}
@@ -596,7 +654,6 @@ function openClusters(){return (ALL.clusters||[]).map(function(c){return "cluste
 function expandAll(){openClusters().forEach(function(cid){network.openCluster(cid);});}
 function collapseAll(){
   (ALL.clusters||[]).forEach(function(c){
-    if(c.id==="unknown") return; // no genre signal: members stay flat
     if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
     network.cluster({
       joinCondition:function(n){return n.cl===c.id;},
@@ -630,7 +687,7 @@ function freshnessLine(meta){
   });
   var vEdges = g.edges.map(function(e,i){
     return {id:"e"+i,from:e.a,to:e.b,value:Math.max(0.2,1.2-e.dist),
-      color:{opacity:1},smooth:false};
+      color:{opacity:1},smooth:false,hidden:!document.getElementById("f-edges").checked};
   });
   g.edges.forEach(function(e,i){e.id="e"+i;});
   nodes = new vis.DataSet(vNodes); edges = new vis.DataSet(vEdges);
@@ -668,7 +725,7 @@ function freshnessLine(meta){
     document.getElementById("q").value="";document.getElementById("f-source").value="";
     document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
     document.getElementById("f-pop-v").textContent="0";
-    document.getElementById("f-edges").checked=true;
+    document.getElementById("f-edges").checked=false;
     applyFilters();collapseAll();
   });
   document.getElementById("f-expand").addEventListener("click",function(){expandAll();});

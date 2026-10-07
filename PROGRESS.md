@@ -44,6 +44,13 @@ Log: last green commit + next box here on every stop.
   filters dim non-matches (transparent + unclickable) instead of
   hiding, positions never change; export de-collides stacks
   (deterministic 30px spiral spread, stable across exports).
+- 2026-10-06: decluttered — k=2 + cap 12 (802 nodes/2907 edges,
+  max deg exactly 12, 0 isolated), edges hidden by default with
+  neighbourhood reveal on hover/select, label-propagation community
+  bubbles (stored centers, neutral Group N labels) so clustering
+  works with zero genre tags; node color follows taxonomy hue
+  (gray = untagged), tagged artists migrate to genre bubbles on
+  republish.
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,
