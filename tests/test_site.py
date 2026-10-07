@@ -112,6 +112,21 @@ def test_untagged_artists_bubble_by_community_not_unknown():
     assert all(n["color"] == "hsl(0, 0%, 74%)" for n in g["nodes"])
 
 
+def test_big_blobs_split_into_bounded_leaves():
+    big = _hub_farm(n=100)
+    g = build_graph(big, k=3)
+    kids = {c["id"] for c in g["clusters"] if c.get("parent")}
+    childless = [c for c in g["clusters"] if c["id"] not in {c.get("parent") for c in g["clusters"] if c.get("parent")}]
+    # every bubble that opens straight to artists holds <= 40 of them
+    assert all(c["count"] <= 40 for c in childless), [(c["id"], c["count"]) for c in childless]
+    # every artist sits in a childless (directly openable) bubble
+    assert {n["cluster"] for n in g["nodes"]} == {c["id"] for c in childless}
+    labels = [c["label"] for c in g["clusters"]]
+    assert len(set(labels)) == len(labels)  # unique bubble labels
+    g2 = build_graph(big, k=3)
+    assert g["clusters"] == g2["clusters"]
+
+
 def test_tagged_artists_keep_genre_bubble_and_hue():
     g = build_graph(_catalog(), k=2)
     by_id = {n["id"]: n for n in g["nodes"]}
@@ -132,14 +147,47 @@ def test_build_graph_clusters_cover_nodes_with_stored_centers():
     g1 = build_graph(_catalog(), k=2)
     ids = {c["id"] for c in g1["clusters"]}
     assert {n["cluster"] for n in g1["nodes"]} <= ids
+    assert {n["top"] for n in g1["nodes"]} <= ids | {c.get("parent") for c in g1["clusters"] if c.get("parent")}
     by_id = {n["id"]: n for n in g1["nodes"]}
+    kids: dict = {}
     for c in g1["clusters"]:
-        members = [by_id[n["id"]] for n in g1["nodes"] if n["cluster"] == c["id"]]
+        if c.get("parent"):
+            kids.setdefault(c["parent"], []).append(c["id"])
+    for c in g1["clusters"]:
+        if c.get("parent") or c["id"] not in kids:
+            members = [by_id[n["id"]] for n in g1["nodes"] if n["cluster"] == c["id"]]
+        else:  # split top: members are the leaves' artists
+            members = [by_id[n["id"]] for n in g1["nodes"] if n["top"] == c["id"]]
         assert c["count"] == len(members) >= 1
         assert c["x"] == round(sum(m["x"] for m in members) / len(members), 1)
         assert c["y"] == round(sum(m["y"] for m in members) / len(members), 1)
+        if c.get("parent"):
+            assert c["parent"] in ids
+            assert all(by_id[n["id"]]["top"] == c["parent"] for n in members)
     g2 = build_graph(_catalog(), k=2)
     assert g1["clusters"] == g2["clusters"]
+
+
+def test_edge_trim_budgets_and_local_weights():
+    from music_catalog.viz import TRIM_BUDGETS
+    g = build_graph(_hub_farm(), k=3)
+    assert all(e["lvl"] in (0, 1, 2) for e in g["edges"])
+    assert all(0.0 < e["w"] <= 1.0 for e in g["edges"])
+    assert not any(k.startswith("rank_") for e in g["edges"] for k in e)
+    per_node: dict = {}
+    for e in g["edges"]:
+        for u in (e["a"], e["b"]):
+            per_node.setdefault(u, {}).setdefault(e["lvl"], 0)
+            per_node[u][e["lvl"]] += 1
+    # union rule: a node may exceed budget via partner-kept edges, but its
+    # own closest link of each kind always survives (no trim isolates)
+    degs: dict = {}
+    for e in g["edges"]:
+        degs[e["a"]] = degs.get(e["a"], 0) + 1
+        degs[e["b"]] = degs.get(e["b"], 0) + 1
+    assert set(degs) == {n["id"] for n in g["nodes"]}
+    assert max(degs.values()) <= MAX_DEGREE
+    assert TRIM_BUDGETS == {0: 4, 1: 2, 2: 1}
 
 
 def test_render_site_writes_graph_and_page(tmp_path):
@@ -195,5 +243,6 @@ def test_rendered_page_freezes_nodes_and_dims_on_filter(tmp_path):
     assert "f-phys" not in page
     assert 'id="f-edges" type="checkbox"> edges' in page  # edges off by default
     assert "hidden:!document.getElementById" in page
-    for marker in ("setHL", "setPinned", "setWiggle", "DIM", "expandAll", "collapseAll"):
+    for marker in ("setHL", "setPinned", "setWiggle", "DIM", "expandAll", "collapseAll",
+                   "openBubble", "collapseTop", "collapseSub", "n.top", "e.w"):
         assert marker in page, marker

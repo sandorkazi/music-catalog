@@ -51,6 +51,13 @@ Log: last green commit + next box here on every stop.
   works with zero genre tags; node color follows taxonomy hue
   (gray = untagged), tagged artists migrate to genre bubbles on
   republish.
+- 2026-10-06: hierarchy + local weights — two-level bubbles
+  (group → subgroup, median-cut leaves ≤ 40 artists, split tops
+  bubble too: Group 1's 172 now opens to 8 leaves of ~21),
+  per-level trim budgets (4/2/1, union, cannot isolate) down to
+  1975 edges, per-edge local weight `w` (1 = both endpoints'
+  closest) driving display width; similarity queries untouched
+  (vectors, not edges).
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,

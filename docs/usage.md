@@ -141,11 +141,12 @@ Edges are degree-capped (closest-first, tie-aware pools so no
 artist is starved behind a hub) and hidden until hover — hover a
 node to light its neighbourhood, tick the edges box to show all.
 Artists start grouped in similarity bubbles (label propagation,
-precomputed centers, stored in the export) — click a bubble to
-open it, or use Expand all / Collapse all. Node colors follow the
-genre taxonomy (gray = untagged); tagged artists migrate to genre
-bubbles automatically as `catalog tags set` curation
-(or a future enrichment pass) fills genres in. Nodes are acronym-in-circle
+precomputed centers, stored in the export) — click one for
+subgroup bubbles (no bubble opens to more than 40 artists),
+again for artists, or use Expand all / Collapse all. Node colors
+follow the genre taxonomy (gray = untagged); tagged artists
+migrate to genre bubbles automatically as `catalog tags set`
+curation (or a future enrichment pass) fills genres in. Nodes are acronym-in-circle
 placeholders — no artwork is hosted or copied. The export is generated
 **natively from that repo's own `state/catalog.json`** — no data is
 duplicated across repos; the code repo only provides the generator.

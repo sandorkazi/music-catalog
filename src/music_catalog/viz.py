@@ -309,6 +309,9 @@ document.querySelectorAll("circle,rect").forEach(function(el){{
 
 GRAPH_K = 2  # nearest-neighbour distances pooled per artist (ties included)
 MAX_DEGREE = 12  # hard cap on edges per node (hubs keep their closest links)
+# Display trim budgets per edge level (see build_graph): how many of each
+# kind a node keeps — closest wins. Union over both endpoints.
+TRIM_BUDGETS = {0: 4, 1: 2, 2: 1}  # 0 intra-subgroup, 1 intra-group, 2 cross-group
 VIS_CDN = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 
 
@@ -497,26 +500,128 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
                 edges.append({"a": key[0], "b": key[1], "dist": round(dist, 4)})
                 progress = True
                 break
-    # Hybrid clusters: genre vote where tags exist, else the label-propagation
-    # community (id "group-<label>"). Artists migrate to genre bubbles
+    # Hybrid clusters: genre vote where tags exist, else a two-level
+    # similarity hierarchy — LP communities (top), then LP per community
+    # on its induced subgraph, then a deterministic median-cut so every
+    # leaf bubble holds <= 40 artists. Artists migrate to genre bubbles
     # automatically once tagged; untagged artists bubble by similarity now.
     comm = communities(ids, edges)
+    xy = {n["id"]: (n["x"], n["y"]) for n in nodes}
+    top_of: dict[str, str] = {}
+    for n in nodes:
+        tokens = vecs[n["id"]]["genres"]
+        top_of[n["id"]] = cluster_for(tokens) if tokens else f"group-{comm[n['id']]}"
+
+    def _split_big(items: list[tuple], max_size: int = 40, depth: int = 0) -> list[list[tuple]]:
+        # items: [(aid, x, y)] -> balanced median-cut leaves. Splits along
+        # the wider axis at the median (id breaks ties); deterministic.
+        if len(items) <= max_size or depth >= 4:
+            return [items]
+        xs = [p[1] for p in items]
+        ys = [p[2] for p in items]
+        axis = 1 if (max(xs) - min(xs)) >= (max(ys) - min(ys)) else 2
+        ordered = sorted(items, key=lambda p: (p[axis], p[0]))
+        mid = len(ordered) // 2
+        return _split_big(ordered[:mid], max_size, depth + 1) + _split_big(ordered[mid:], max_size, depth + 1)
+
+    leaf_of: dict[str, str] = {}  # aid -> finest cluster id
+    leaf_parent: dict[str, str | None] = {}  # finest -> top (None == top itself)
+    for top in sorted(set(top_of.values())):
+        members = sorted(aid for aid in ids if top_of[aid] == top)
+        if top.startswith("group-"):
+            mset = set(members)
+            induced = [e for e in edges if e["a"] in mset and e["b"] in mset]
+            sublabels = communities(members, induced)
+            buckets: dict[str, list[str]] = {}
+            for aid in members:
+                buckets.setdefault(sublabels[aid], []).append(aid)
+            parts = []
+            for sub in sorted(buckets):
+                parts.extend(_split_big([(aid,) + xy[aid] for aid in sorted(buckets[sub])]))
+        else:
+            parts = _split_big([(aid,) + xy[aid] for aid in members])
+        if len(parts) == 1:
+            for aid in members:
+                leaf_of[aid] = top
+            leaf_parent[top] = None
+        else:
+            # letter leaves westernmost -> easternmost for spatial stability
+            ordered = sorted(parts, key=lambda p: (sum(xy[aid][0] for aid, _, _ in p) / len(p),
+                                                   sum(xy[aid][1] for aid, _, _ in p) / len(p),
+                                                   p[0][0]))
+            for k, part in enumerate(ordered):
+                finest = f"{top}/{chr(ord('a') + k) if k < 26 else f'x{k}'}"
+                for aid, _, _ in part:
+                    leaf_of[aid] = finest
+                leaf_parent[finest] = top
     by_cluster: dict[str, list[int]] = {}
     for i, n in enumerate(nodes):
-        tokens = vecs[n["id"]]["genres"]
-        cid = cluster_for(tokens) if tokens else f"group-{comm[n['id']]}"
-        n["cluster"] = cid
-        n["color"] = genre_color(cid)
-        by_cluster.setdefault(cid, []).append(i)
-    group_rank = {cid: i + 1 for i, cid in
-                  enumerate(sorted((c for c in by_cluster if c.startswith("group-")),
-                                   key=lambda c: (-len(by_cluster[c]), c)))}
+        n["cluster"] = leaf_of[n["id"]]
+        n["top"] = top_of[n["id"]]
+        n["color"] = genre_color(n["cluster"])
+        by_cluster.setdefault(n["cluster"], []).append(i)
+    # Display trim: classify each edge by the level at which its endpoints
+    # diverge (0 same subgroup, 1 same top group, 2 cross-group) and keep,
+    # per node and level, only the closest TRIM_BUDGETS[lvl] (union over
+    # both endpoints, so a node never loses its own closest link of any
+    # kind — trimming cannot isolate). Similarity queries use vectors,
+    # not edges, so nothing analytical is lost: edges are a display subset.
+    by_id = {n["id"]: n for n in nodes}
+    for e in edges:
+        a, b = by_id[e["a"]], by_id[e["b"]]
+        e["lvl"] = 0 if a["cluster"] == b["cluster"] else (1 if a["top"] == b["top"] else 2)
+    per_node: dict[str, dict[int, list[int]]] = {}
+    for i, e in enumerate(edges):
+        for u in (e["a"], e["b"]):
+            per_node.setdefault(u, {}).setdefault(e["lvl"], []).append(i)
+    keep: set[int] = set()
+    for u, lvls in per_node.items():
+        for lvl, idxs in lvls.items():
+            idxs.sort(key=lambda i: (edges[i]["dist"], edges[i]["a"], edges[i]["b"]))
+            keep.update(idxs[:TRIM_BUDGETS[lvl]])
+    edges = [e for i, e in enumerate(edges) if i in keep]
+    # Local weight: how the edge ranks among each endpoint's *kept* edges.
+    # w=1 when it is both endpoints' closest — the links that matter there.
+    indeg: dict[str, list[int]] = {}
+    for i, e in enumerate(edges):
+        indeg.setdefault(e["a"], []).append(i)
+        indeg.setdefault(e["b"], []).append(i)
+    for idxs in indeg.values():
+        idxs.sort(key=lambda i: (edges[i]["dist"], edges[i]["a"], edges[i]["b"]))
+    for u, idxs in indeg.items():
+        for rank, i in enumerate(idxs):
+            edges[i][f"rank_{u}"] = rank
+    for e in edges:
+        da, db = len(indeg[e["a"]]), len(indeg[e["b"]])
+        e["w"] = round(1.0 - (e.pop(f"rank_{e['a']}") / da + e.pop(f"rank_{e['b']}") / db) / 2.0, 3)
+    tops = sorted({leaf_parent[c] or c for c in by_cluster},
+                    key=lambda t: (-sum(len(by_cluster[x]) for x in by_cluster
+                                        if x == t or leaf_parent.get(x) == t), t))
+    group_rank = {t: i + 1 for i, t in enumerate(tops) if t.startswith("group-")}
+    children: dict[str, list[str]] = {}
+    for cid in by_cluster:
+        p = leaf_parent[cid]
+        if p is not None:
+            children.setdefault(p, []).append(cid)
+    # entries: every leaf + every split top (so split tops bubble too)
+    entries = [(cid, leaf_parent[cid]) for cid in by_cluster]
+    entries += [(t, None) for t in children]
     clusters = []
-    for cid in sorted(by_cluster):
-        idx = by_cluster[cid]
+    for cid, parent in sorted(entries):
+        if parent is None and cid in children:
+            idx = [i for sub in children[cid] for i in by_cluster[sub]]
+        else:
+            idx = by_cluster[cid]
+        if parent is None:
+            label = f"Group {group_rank[cid]}" if cid in group_rank else cid
+        else:
+            suffix = cid.rsplit("/", 1)[1]
+            label = (f"Group {group_rank[parent]}{suffix}" if parent in group_rank
+                     else f"{parent} {suffix}")
         clusters.append({
             "id": cid,
-            "label": f"Group {group_rank[cid]}" if cid in group_rank else cid,
+            "label": label,
+            "parent": parent,
             "x": round(sum(nodes[i]["x"] for i in idx) / len(idx), 1),
             "y": round(sum(nodes[i]["y"] for i in idx) / len(idx), 1),
             "count": len(idx),
@@ -556,7 +661,7 @@ footer{color:#666;font-size:.8em;margin:1em 0 2em}
 </div>
 <div id="layout">
 <div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
-<aside id="info"><h2>Artist info</h2><p>Artists start grouped in similarity bubbles (genre bubbles once tagged — node colors show genre, gray means untagged). Click a bubble to open it. Hover a circle to preview its links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
+<aside id="info"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves. Gray nodes are untagged; colors follow genre.</p></aside>
 </div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
 <script src="__VIS_CDN__"></script>
@@ -651,18 +756,39 @@ function showInfo(id){
 }
 function clusterColor(id){var h=0;var s="cluster-"+id;for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return "hsl("+(h%360)+", 60%, 70%)";}
 function openClusters(){return (ALL.clusters||[]).map(function(c){return "cluster:"+c.id;}).filter(function(cid){return network.findNode(cid).length>0;});}
-function expandAll(){openClusters().forEach(function(cid){network.openCluster(cid);});}
-function collapseAll(){
-  (ALL.clusters||[]).forEach(function(c){
-    if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
-    network.cluster({
-      joinCondition:function(n){return n.cl===c.id;},
-      clusterNodeProperties:{id:"cluster:"+c.id,label:c.label+" ("+c.count+")",shape:"dot",
-        size:16+Math.min(34,c.count),x:c.x,y:c.y,
-        color:{background:clusterColor(c.id),border:"#333"},
-        font:{size:16,face:"sans-serif",bold:true}}
-    });
+function expandAll(){openClusters().forEach(function(cid){network.openCluster(cid);});openClusters().forEach(function(cid){network.openCluster(cid);});}
+function collapseTop(c){
+  if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
+  network.cluster({
+    joinCondition:(function(gid){return function(n){return n.top===gid;};})(c.id),
+    clusterNodeProperties:{id:"cluster:"+c.id,label:c.label+" ("+c.count+")",shape:"dot",
+      size:16+Math.min(34,c.count),x:c.x,y:c.y,
+      color:{background:clusterColor(c.id),border:"#333"},
+      font:{size:16,face:"sans-serif",bold:true}}
   });
+}
+function collapseSub(c){
+  if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
+  network.cluster({
+    joinCondition:(function(sid){return function(n){return n.cl===sid;};})(c.id),
+    clusterNodeProperties:{id:"cluster:"+c.id,label:c.label+" ("+c.count+")",shape:"dot",
+      size:12+Math.min(20,c.count),x:c.x,y:c.y,
+      color:{background:clusterColor(c.id),border:"#333"},
+      font:{size:14,face:"sans-serif",bold:true}}
+  });
+}
+function collapseAll(){
+  expandAll();
+  (ALL.clusters||[]).forEach(function(c){if(!c.parent) collapseTop(c);});
+}
+function openBubble(cid){
+  showInfo(cid);
+  network.openCluster(cid);
+  var base = cid.slice(8);
+  var meta = ALL.clusters.filter(function(x){return x.id===base;})[0]||{};
+  if(!meta.parent){
+    (ALL.clusters||[]).forEach(function(c){if(c.parent===base) collapseSub(c);});
+  }
 }
 fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
   ALL = g; ALL.byId = {};
@@ -672,8 +798,10 @@ fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r
     var o=document.createElement("option");o.value=s;o.textContent=s;
     document.getElementById("f-source").appendChild(o);
   });
+  var nGroups = (g.clusters||[]).filter(function(c){return !c.parent;}).length;
+  var nSubs = (g.clusters||[]).filter(function(c){return c.parent;}).length;
   document.getElementById("counts").textContent =
-    g.nodes.length+" artists in "+(g.clusters||[]).length+" genre clusters, "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded). "+freshnessLine(g.meta||{});
+    g.nodes.length+" artists in "+nGroups+" groups"+(nSubs?" · "+nSubs+" subgroups":"")+", "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded). "+freshnessLine(g.meta||{});
 function freshnessLine(meta){
   var bits = [];
   if(meta.generated_at) bits.push("updated "+meta.generated_at);
@@ -683,10 +811,10 @@ function freshnessLine(meta){
   var vNodes = g.nodes.map(function(n,i){
     return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
       shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
-      x:n.x,y:n.y,cl:n.cluster,fixed:{x:true,y:true},font:{size:14,face:"sans-serif"}};
+      x:n.x,y:n.y,cl:n.cluster,top:n.top,fixed:{x:true,y:true},font:{size:14,face:"sans-serif"}};
   });
   var vEdges = g.edges.map(function(e,i){
-    return {id:"e"+i,from:e.a,to:e.b,value:Math.max(0.2,1.2-e.dist),
+    return {id:"e"+i,from:e.a,to:e.b,value:0.3+(e.w==null?0.5:e.w)*1.7,
       color:{opacity:1},smooth:false,hidden:!document.getElementById("f-edges").checked};
   });
   g.edges.forEach(function(e,i){e.id="e"+i;});
@@ -704,7 +832,7 @@ function freshnessLine(meta){
   network.on("click",function(p){
     if(p.nodes.length){
       var cid = String(p.nodes[0]);
-      if(cid.indexOf("cluster:")===0){showInfo(cid);network.openCluster(cid);return;}
+      if(cid.indexOf("cluster:")===0){openBubble(cid);return;}
       if(DIM[cid]) return;
       setPinned(p.nodes[0]);showInfo(pinned);highlight(pinned);
       network.focus(pinned,{scale:1.5,animation:false});
