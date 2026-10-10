@@ -5,19 +5,21 @@
 | Module | Owns |
 |---|---|
 | `data.py` | Data-dir resolution (`resolve_data_dir`, `state_path`) — code repo never owns state |
-| `store.py` | File-backed registry: `normalize_name`, `ensure_artist`, `add_track` (cap 5), `merge_artists`, `dismiss_merge`; schema version 1 |
-| `importer.py` | Tolerant parsers: Spotify shapes + YouTube via `youtube.py`; `import_items` + report |
+| `store.py` | File-backed registry: `normalize_name`, `ensure_artist`, `add_track` (cap 5), `merge_artists` (exact-links same titles), `dismiss_merge`; schema version 3 |
+| `importer.py` | Tolerant parsers: Spotify shapes + YouTube via `youtube.py`; `import_items` + report (second source *links*, `linked_tracks`) |
+| `links.py` | Dual-source consolidation: `sources` map per track, `consolidate_catalog`/`consolidate_artist` (exact auto-merge, fuzzy → `needs_review`), `coverage_report`, `attach/detach_source` |
 | `youtube.py` | yt-dlp title parsing (`split_artist_title`, `- Topic` fallback, multi-artist split), `crossref_items` verdicts |
 | `sources.py` | `Source` ABC: `fetch(ref)` read-only poll, `publish(tracks, dry_run=True)` stub; `YoutubeSource`, `SpotifySource`, `FakeSource`; `monitor_diff`; `write_snapshot` |
 | `candidates.py` | `similarity` (feature cosine + genre Jaccard, title-overlap fallback), `score_candidate` (`popularity − similarity`), `pick_candidates(k=2)` |
 | `viz.py` | Vectors (`artist_vector`, `track_vector`), dependency-free PCA (`project`), static HTML (`render_html`), `similar_artists` / `similar_tracks` |
-| `cli.py` | `catalog <cmd>`: import, xref, monitor, artist, gaps, candidates, similar, viz, publish |
+| `cli.py` | `catalog <cmd>`: import, xref, monitor, artist, gaps, coverage, consolidate, link/unlink, candidates, similar, viz, publish |
 
 ## Data model (data repo `state/`)
 
 ```json
 {"artists": [{"id": "a1", "name": "…", "aliases": [], "status": "ok|unknown|merged"}],
- "tracks": [{"id": "t1", "artist_id": "a1", "title": "…", "source": "youtube|spotify|import",
+ "tracks": [{"id": "t1", "artist_id": "a1", "title": "…", "source": "spotify",
+             "sources": {"spotify": {"id": "t1"}, "youtube": {"id": "youtube:vid"}},
              "popularity": 0, "features": {}, "genres": [], "pinned": false}]}
 ```
 
@@ -25,6 +27,11 @@
 - `review.json` — `unknown` queue + `pending_merges` (user decides, never auto-merged).
 - `snapshots/` — timestamped monitor diffs (append-only record).
 - Rules: cap 5 tracks/artist, soft target 2; unknowns → review; merges explicit.
+- Tracks are source-agnostic: one track carries a `sources` ref per side
+  (schema v3, migrated in memory from legacy single `source`). Same
+  artist + same normalized title = same track; the second source links
+  instead of duplicating. Goal: every track on both sides; anything
+  missing a side shows up in `catalog coverage` until linked.
 
 ## The `Source` contract (SPEC #2/#3, v2-ready)
 

@@ -37,6 +37,10 @@ with popular-but-dissimilar candidates, browse genre/track similarity space.
    Spotify sources; normalize names; dedupe with alias map; `unknown`
    goes to review queue, never silently dropped/merged. User
    approves merges via CLI (`artist merge/list/review`).
+   Tracks are source-agnostic: one track carries a `sources` ref per
+   side, and the goal is every track on both sides. `catalog coverage`
+   tracks anything missing a side; `catalog consolidate` merges
+   same-title duplicates; `catalog link/unlink` fix the rest by hand.
 5. **0–5 tracks per artist, preferably 2** — per-artist cap 5, soft
    target 2; store rank/source/popularity; pin/lock tracks.
 6. **Import from arbitrary export JSON** — `catalog import file.json`

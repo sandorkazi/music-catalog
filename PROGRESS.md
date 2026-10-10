@@ -11,6 +11,20 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-11: dual-source consolidation on `develop` (uncommitted) —
+  tracks are source-agnostic (schema v3 `sources` map, in-memory
+  migration): imports link the second side (`linked_tracks`), artist
+  merges exact-collapse same titles, `catalog coverage` (both/missing
+  lists), `catalog consolidate --apply` (exact auto-merge, fuzzy →
+  `needs_review`), `catalog link/unlink`, `monitor` `linkable` verdict.
+  Real-data dry-run: 5 pairs merge (Slave/Sex on Fire/Rún/Tsunami/
+  Wasabi), 0 needs_review; coverage now 0 both / 1421 spotify-only /
+  113 youtube-only. Verified stdlib-only (no pytest/pip here): 11/11
+  new link tests + merge/candidates/site suites pass (runnable subset),
+  read-only CLI checks green. Data repo untouched. Next: commit here,
+  then `consolidate --apply` + artist merges in the data repo, then
+  fill the missing sides.
+
 - 2026-10-11: Pages serves both branches — one site on `gh-pages`
   (root = main's `docs/`, `/develop/` = develop's `docs/`), rebuilt by
   `.github/workflows/pages.yml` on push to `main`/`develop` (tracked in

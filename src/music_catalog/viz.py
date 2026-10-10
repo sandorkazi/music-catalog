@@ -451,7 +451,9 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     for i, ((x, y), a) in enumerate(zip(pos, in_catalog)):
         v = vecs[a["id"]]
         mine = [t for t in catalog.get("tracks", []) if t.get("artist_id") == a["id"]]
-        sources = sorted({t.get("source", "?") for t in mine})
+        from .links import track_source_names
+
+        sources = sorted({s for t in mine for s in track_source_names(t)})
         nodes.append({
             "id": a["id"],
             "name": a.get("name", a["id"]),

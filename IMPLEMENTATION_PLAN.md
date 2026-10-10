@@ -65,11 +65,19 @@ Repeat per row with its branch/budget-id/template port
 
 ```json
 {"artists": [{"id": "a1", "name": "…", "aliases": [], "status": "ok|unknown|merged"}],
- "tracks": [{"id": "t1", "artist_id": "a1", "title": "…", "source": "youtube|spotify|import",
+ "tracks": [{"id": "t1", "artist_id": "a1", "title": "…", "source": "spotify",
+             "sources": {"spotify": {"id": "…", "url": "…"},
+                         "youtube": {"id": "youtube:…", "url": "…",
+                                     "video_title": "…", "channel": "…"}},
              "popularity": 0, "features": {}, "pinned": false}]}
 ```
 
 Rules: cap 5/artist, target 2; unknowns → `state/review.json`; merges explicit.
+Same artist + same normalized title (feat mentions ignored) = same track:
+the second source's import links instead of duplicating, and
+`consolidate` merges pre-existing duplicates (only when a source is
+gained — same-source duplicates stay separate so no ref is dropped).
+Near-matches are never auto-merged (`needs_review` → `catalog link`).
 Phase 3 builds the `Source` interface read-only but with a write-path
 stub (`publish(dry_run=True)`) so v2 phase 7 plugs in YT + Spotify publishers.
 

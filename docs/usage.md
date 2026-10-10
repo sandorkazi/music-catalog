@@ -65,7 +65,28 @@ catalog gaps [--source youtube] [--sort name|tracks] [--compact]
 ```
 
 Artists with fewer than 2 tracks, split into `zero` (0 tracks) and
-`one` (1 track) lists with per-artist sources.
+`one` (1 track) lists with per-artist sources. `--source` matches the
+per-track `sources` map (either side counts).
+
+## Coverage (dual-source tracking)
+
+```bash
+catalog coverage [--missing youtube|spotify] [--sort artist|title] [--compact]
+catalog consolidate [--apply] [--threshold 0.86] [--compact]
+catalog link <track-id> --source youtube --external-id <vid> [--url ...] [--dry-run]
+catalog unlink <track-id> --source youtube [--apply]
+```
+
+Tracks are source-agnostic: one track should exist on **both** Spotify
+and YouTube. `coverage` is the continuous tracker — counts
+(`both`/`spotify_only`/`youtube_only`) plus the `missing_*` lists until
+every track has both refs. `consolidate` merges same-artist same-title
+duplicates into dual-source tracks (read-only by default, `--apply` to
+write; near-matches go to `needs_review`, never auto-merged — attach
+them with `link`). `monitor` also flags `linkable` items (a known track
+missing the polled side). Imports link automatically: re-importing the
+other source's export attaches its ref (`linked_tracks`) instead of
+adding a duplicate.
 
 ## Candidates (gap filling)
 

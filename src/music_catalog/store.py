@@ -9,7 +9,7 @@ from .data import resolve_data_dir, state_path
 
 CATALOG_FILE = "catalog.json"
 REVIEW_FILE = "review.json"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TRACKS_PER_ARTIST_CAP = 5
 
 _ws = re.compile(r"\s+")
@@ -52,6 +52,7 @@ def save_json(path: Path, data: dict) -> None:
 
 
 def load_catalog(data_dir=None) -> tuple[dict, Path]:
+    from .links import migrate_track_sources  # deferred: links imports store
     from .tags import migrate_catalog  # deferred: tags must not import store
 
     path = state_path(CATALOG_FILE, data_dir)
@@ -59,6 +60,7 @@ def load_catalog(data_dir=None) -> tuple[dict, Path]:
     data.setdefault("artists", [])
     data.setdefault("tracks", [])
     migrate_catalog(data)  # in-memory v1 -> v2; persisted on next write
+    migrate_track_sources(data)  # in-memory v2 -> v3; persisted on next write
     return data, path
 
 
@@ -121,8 +123,10 @@ def artist_track_count(catalog: dict, artist_id: str) -> int:
 def merge_artists(catalog: dict, review: dict, keep_id: str, drop_id: str) -> dict:
     """Merge drop_id into keep_id (explicit, user-approved only).
 
-    Moves tracks (pinned + highest popularity survive the cap of 5),
-    unions aliases, removes the dropped record and stale pending entries.
+    Moves tracks, exact-merges same-title duplicates into dual-source
+    tracks (``links.consolidate_artist``), then enforces the cap of 5
+    (pinned + highest popularity survive). Unions aliases, removes the
+    dropped record and stale pending entries.
     """
     if keep_id == drop_id:
         raise ValueError("keep_id and drop_id are identical")
@@ -137,6 +141,11 @@ def merge_artists(catalog: dict, review: dict, keep_id: str, drop_id: str) -> di
         if t.get("artist_id") == drop_id:
             t["artist_id"] = keep_id
             summary["moved_tracks"] += 1
+    from .links import consolidate_artist
+
+    linked = consolidate_artist(catalog, keep_id)
+    summary["linked_tracks"] = linked["merged"]
+    summary["linked_pairs"] = linked["pairs"]
     mine = [t for t in catalog["tracks"] if t.get("artist_id") == keep_id]
     # pinned tracks survive; then highest popularity; stable by id
     mine.sort(key=lambda t: (bool(t.get("pinned")), t.get("popularity", 0), t.get("id", "")), reverse=True)
@@ -172,8 +181,12 @@ def dismiss_merge(review: dict, id1: str, id2: str) -> bool:
 def add_track(catalog: dict, track: dict) -> str:
     """Add a track dict. Returns: 'added' | 'duplicate' | 'capped'.
 
-    Enforces cap 5/artist keeping highest popularity.
+    Enforces cap 5/artist keeping highest popularity. Ensures the
+    dual-source ``sources`` map exists (schema v3).
     """
+    from .links import ensure_sources
+
+    ensure_sources(track)
     for t in catalog["tracks"]:
         if t.get("id") == track["id"]:
             return "duplicate"

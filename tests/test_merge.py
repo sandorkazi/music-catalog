@@ -37,8 +37,13 @@ def test_merge_moves_tracks_and_clears_pending():
     catalog, review = _sample()
     s = merge_artists(catalog, review, "sp:dvbbs", "youtube:dvbbs")
     assert s["moved_tracks"] == 1 and s["capped_tracks"] == []
-    assert artist_track_count(catalog, "sp:dvbbs") == 2
+    # same-title Tsunami pair collapses into one dual-source track
+    assert s["linked_tracks"] == 1
+    assert artist_track_count(catalog, "sp:dvbbs") == 1
     assert artist_track_count(catalog, "youtube:dvbbs") == 0
+    survivor = next(t for t in catalog["tracks"] if t["artist_id"] == "sp:dvbbs")
+    assert survivor["id"] == "t1"  # stable Spotify id wins as canonical
+    assert set(survivor["sources"]) == {"spotify", "youtube"}
     assert all(a["id"] != "youtube:dvbbs" for a in catalog["artists"])
     assert len(review["pending_merges"]) == 1  # borgeous entry untouched
 
@@ -51,7 +56,7 @@ def test_merge_enforces_cap_keep_pinned():
     s = merge_artists(catalog, review, "sp:dvbbs", "youtube:dvbbs")
     assert artist_track_count(catalog, "sp:dvbbs") == 5
     assert any(t["pinned"] for t in catalog["tracks"] if t["artist_id"] == "sp:dvbbs")
-    assert len(s["capped_tracks"]) == 3  # 8 -> cap 5
+    assert len(s["capped_tracks"]) == 2  # 7 unique titles -> cap 5 (Tsunami pair linked first)
 
 
 def test_dismiss_keeps_artists():

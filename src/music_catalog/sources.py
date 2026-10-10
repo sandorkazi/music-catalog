@@ -125,6 +125,7 @@ def monitor_diff(catalog: dict, items: list[dict]) -> dict:
         "known_artist_new_track": 0,
         "new_artist": 0,
         "unknown": 0,
+        "linkable": 0,
         "details": [],
     }
     for it in items:
@@ -139,6 +140,20 @@ def monitor_diff(catalog: dict, items: list[dict]) -> dict:
         primary = (it.get("artists") or [{}])[0].get("name", "")
         hit = find_artist_by_name(catalog, primary)
         if hit is not None:
+            # known track missing this source: link candidate, not a new track
+            from .links import find_exact_linkable, track_has_source
+
+            item_source = it.get("source")
+            match = find_exact_linkable(catalog, hit["id"], it.get("title", ""))
+            if match is not None and item_source in ("spotify", "youtube") \
+                    and not track_has_source(match, item_source):
+                report["linkable"] += 1
+                report["details"].append(
+                    {"verdict": "linkable", "artist": primary, "catalog_id": hit["id"],
+                     "catalog_track_id": match["id"], "title": it.get("title"),
+                     "missing_source": item_source}
+                )
+                continue
             report["known_artist_new_track"] += 1
             report["details"].append(
                 {"verdict": "known_artist_new_track", "artist": primary, "catalog_id": hit["id"], "title": it.get("title")}

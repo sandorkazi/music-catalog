@@ -266,6 +266,8 @@ def cmd_similar(args) -> int:
 
 
 def cmd_artist(args) -> int:
+    from .links import track_has_source
+
     catalog, catalog_path = load_catalog(args.data_dir)
     review, review_path = load_review(args.data_dir)
     if args.artist_cmd == "list":
@@ -275,7 +277,8 @@ def cmd_artist(args) -> int:
             for a in catalog["artists"]
         ]
         if args.source:
-            ids = {t["artist_id"] for t in catalog["tracks"] if t.get("source") == args.source}
+            ids = {t["artist_id"] for t in catalog["tracks"]
+                   if track_has_source(t, args.source)}
             rows = [r for r in rows if r["id"] in ids]
         rows.sort(key=lambda r: (r["tracks"], r["name"].casefold()), reverse=(args.sort == "tracks"))
         if args.sort == "name":
@@ -299,11 +302,14 @@ def cmd_artist(args) -> int:
 
 def cmd_gaps(args) -> int:
     """Gap detection (SPEC #7): artists with < 2 tracks, 0-track / 1-track split."""
+    from .links import track_source_names
+
     catalog, _ = load_catalog(args.data_dir)
     gaps = {"zero": [], "one": []}
     for a in catalog["artists"]:
         n = artist_track_count(catalog, a["id"])
-        sources = sorted({t.get("source") for t in catalog["tracks"] if t.get("artist_id") == a["id"]})
+        sources = sorted({s for t in catalog["tracks"] if t.get("artist_id") == a["id"]
+                          for s in track_source_names(t)})
         if args.source and args.source not in sources:
             continue
         entry = {"id": a["id"], "name": a["name"], "tracks": n, "sources": sources}
@@ -318,6 +324,108 @@ def cmd_gaps(args) -> int:
                       "zero": gaps["zero"] if not args.compact else [],
                       "one": gaps["one"] if not args.compact else []},
                      indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_coverage(args) -> int:
+    """Dual-source coverage: tracks on both vs missing one side (continuous tracker)."""
+    from .links import coverage_report
+
+    catalog, _ = load_catalog(args.data_dir)
+    rep = coverage_report(catalog)
+    key = (lambda e: e["title"].casefold()) if args.sort == "title" \
+        else (lambda e: (e["artist"].casefold(), e["title"].casefold()))
+    rep["missing_spotify"] = sorted(rep["missing_spotify"], key=key)
+    rep["missing_youtube"] = sorted(rep["missing_youtube"], key=key)
+    out = {"tracks": rep["tracks"], "both": rep["both"],
+           "spotify_only": rep["spotify_only"], "youtube_only": rep["youtube_only"],
+           "other": rep["other"]}
+    if args.missing in (None, "spotify"):
+        out["missing_spotify"] = [] if args.compact else rep["missing_spotify"]
+        out["missing_spotify_count"] = len(rep["missing_spotify"])
+    if args.missing in (None, "youtube"):
+        out["missing_youtube"] = [] if args.compact else rep["missing_youtube"]
+        out["missing_youtube_count"] = len(rep["missing_youtube"])
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_consolidate(args) -> int:
+    """Merge same-artist same-title duplicates into dual-source tracks.
+
+    Read-only by default; ``--apply`` writes. Near-matches are never
+    auto-merged — they land in ``needs_review`` for ``catalog link``.
+    """
+    from .links import consolidate_catalog
+
+    catalog, catalog_path = load_catalog(args.data_dir)
+    if args.apply:
+        report = consolidate_catalog(catalog, threshold=args.threshold)
+        save_json(catalog_path, catalog)
+        report["mode"] = "applied"
+    else:
+        import copy
+
+        report = consolidate_catalog(copy.deepcopy(catalog), threshold=args.threshold)
+        report["mode"] = "dry-run"
+    report["catalog_path"] = str(catalog_path)
+    if args.compact:
+        report.pop("pairs", None)
+        report.pop("needs_review", None)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_link(args) -> int:
+    """Manually attach a missing source ref to a track (fuzzy/review follow-up)."""
+    from .links import attach_source, build_ref
+
+    catalog, catalog_path = load_catalog(args.data_dir)
+    track = next((t for t in catalog["tracks"] if t.get("id") == args.track), None)
+    if track is None and args.by == "title":
+        track = next((t for t in catalog["tracks"] if t.get("title", "").casefold() == args.track.casefold()), None)
+    if track is None:
+        print(f"error: unknown track {args.track!r}", file=sys.stderr)
+        return 2
+    ext = args.external_id
+    if args.source == "youtube" and not ext.startswith("youtube:"):
+        ext = f"youtube:{ext}"
+    ref = build_ref(args.source, ext, url=args.url,
+                    video_title=args.video_title, channel=args.channel)
+    if args.dry_run:
+        already = args.source in (track.get("sources") or {})
+        print(json.dumps({"track": track["id"], "title": track.get("title"),
+                          "sources": sorted((track.get("sources") or {})),
+                          "would_attach": not already, "mode": "dry-run"}))
+        return 0
+    attached = attach_source(track, args.source, ref)
+    save_json(catalog_path, catalog)
+    print(json.dumps({"track": track["id"], "title": track.get("title"),
+                      "attached": attached, "sources": sorted(track.get("sources", {})),
+                      "mode": "applied"}, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_unlink(args) -> int:
+    """Detach a source ref from a track (correction path)."""
+    from .links import detach_source
+
+    catalog, catalog_path = load_catalog(args.data_dir)
+    track = next((t for t in catalog["tracks"] if t.get("id") == args.track), None)
+    if track is None:
+        print(f"error: unknown track {args.track!r}", file=sys.stderr)
+        return 2
+    if not args.apply:
+        print(json.dumps({"track": track["id"], "title": track.get("title"),
+                          "sources": sorted((track.get("sources") or {})),
+                          "would_detach": args.source, "mode": "dry-run"}))
+        return 0
+    ok = detach_source(track, args.source)
+    if ok:
+        save_json(catalog_path, catalog)
+    print(json.dumps({"track": track["id"], "detached": ok,
+                      "sources": sorted((track.get("sources") or {})),
+                      "mode": "applied"}))
     return 0
 
 
@@ -401,6 +509,33 @@ def build_parser() -> argparse.ArgumentParser:
     si.add_argument("--top", type=int, default=5)
     si.add_argument("--least", action="store_true", help="flip to least-similar")
     si.set_defaults(func=cmd_similar)
+    co = sub.add_parser("coverage", help="dual-source track coverage (both vs missing one side)")
+    co.add_argument("--missing", default=None, choices=["spotify", "youtube"],
+                    help="show only tracks missing this source (default: both lists)")
+    co.add_argument("--sort", default="artist", choices=["artist", "title"])
+    co.add_argument("--compact", action="store_true", help="counts only")
+    co.set_defaults(func=cmd_coverage)
+    cn = sub.add_parser("consolidate", help="merge same-title duplicates into dual-source tracks")
+    cn.add_argument("--apply", action="store_true", help="write state (default is read-only dry-run)")
+    cn.add_argument("--threshold", type=float, default=0.86,
+                    help="fuzzy near-match cutoff for needs_review (default 0.86)")
+    cn.add_argument("--compact", action="store_true", help="omit pairs/needs_review details")
+    cn.set_defaults(func=cmd_consolidate)
+    li = sub.add_parser("link", help="attach a missing source ref to a track")
+    li.add_argument("track", help="track id (or title with --by title)")
+    li.add_argument("--by", default="id", choices=["id", "title"])
+    li.add_argument("--source", required=True, choices=["spotify", "youtube"])
+    li.add_argument("--external-id", required=True, help="id on that source (Spotify id / YouTube video id)")
+    li.add_argument("--url", default=None)
+    li.add_argument("--video-title", default=None)
+    li.add_argument("--channel", default=None)
+    li.add_argument("--dry-run", action="store_true", help="preview without writing")
+    li.set_defaults(func=cmd_link)
+    ul = sub.add_parser("unlink", help="detach a source ref from a track")
+    ul.add_argument("track", help="track id")
+    ul.add_argument("--source", required=True, choices=["spotify", "youtube"])
+    ul.add_argument("--apply", action="store_true", help="write state (default is read-only dry-run)")
+    ul.set_defaults(func=cmd_unlink)
     return p
 
 

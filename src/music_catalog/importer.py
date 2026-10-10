@@ -85,9 +85,11 @@ def import_items(catalog: dict, review: dict, items: list[dict], source: str = "
         "added_tracks": 0,
         "duplicate_tracks": 0,
         "capped_tracks": 0,
+        "linked_tracks": 0,
         "unknowns": 0,
         "pending_merges": 0,
     }
+    from .links import attach_source, build_ref, find_exact_linkable, track_has_source
     for it in items:
         if it.get("_unknown"):
             report["unknowns"] += 1
@@ -115,11 +117,24 @@ def import_items(catalog: dict, review: dict, items: list[dict], source: str = "
         for feat in it["artists"][1:]:
             if normalize_name(feat["name"]) not in [normalize_name(x) for x in prim_rec.get("aliases", [])] and normalize_name(feat["name"]) != normalize_name(prim_rec["name"]):
                 prim_rec.setdefault("aliases", []).append(feat["name"])
+        item_source = it.get("source", source)
+        ref = build_ref(item_source, it["track_id"], url=it.get("url"),
+                        video_title=it.get("video_title"), channel=it.get("channel"))
+        # same artist + same title from the other source: link, don't duplicate
+        if not any(t.get("id") == it["track_id"] for t in catalog["tracks"]):
+            linkable = find_exact_linkable(catalog, primary["id"], it["title"])
+            if linkable is not None and not track_has_source(linkable, item_source):
+                attach_source(linkable, item_source, ref)
+                linkable["popularity"] = max(linkable.get("popularity", 0) or 0,
+                                             it.get("popularity", 0) or 0)
+                report["linked_tracks"] += 1
+                continue
         track = {
             "id": it["track_id"],
             "artist_id": primary["id"],
             "title": it["title"],
-            "source": it.get("source", source),
+            "source": item_source,
+            "sources": {item_source: ref},
             "popularity": it.get("popularity", 0),
             "features": {},
             "pinned": False,
