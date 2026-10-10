@@ -51,6 +51,14 @@ Log: last green commit + next box here on every stop.
   works with zero genre tags; node color follows taxonomy hue
   (gray = untagged), tagged artists migrate to genre bubbles on
   republish.
+- 2026-10-10: clicks fixed — the pan-vs-click guard listened for
+  `mousedown`, which never arrives here (only pointer events do), so
+  every click looked like a pan and was ignored; bubbles seemed to
+  "disappear" (they never opened). Guard now keys off
+  `pointerdown`. Also `collapseAll` clears a stale pin. Verified
+  with real scripted browser clicks: open group → 8/8 subs, open
+  sub → 21 artists, pin artist + info panel, collapse restores
+  99 bubbles, zero errors.
 - 2026-10-10: observatory redesign (researched: 3d-force-graph /
   cosmograph / sigma.js / deck.gl — picked 2D canvas force-graph
   1.52.0: full glow control, zero module/three-copy risk, our data

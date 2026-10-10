@@ -91,11 +91,46 @@ footer code{color:var(--txt)}
 <aside id="info" class="panel"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
 <div id="tip"></div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Needs http (<code>python3 -m http.server</code>) — file:// blocks graph.json.</footer>
-<script src="__FG_CDN__"></script>
+<script crossorigin="anonymous" src="__FG_CDN__"></script>
 <script>
 var ALL=null, BYID={}, Graph=null;
 var DIM={}, HL=null, PINNED=null, HOVERED=null, SHOW_E=false;
 var LASTMOUSE={x:0,y:0};
+
+function nodeRadius(n){ return n._bubble ? 15+Math.min(30,n.count) : 5+n.tracks*1.7; }
+function liveTransform(){
+  // Derive the exact current camera transform from the lib itself every
+  // time: zoom() for scale, else two-node calibration; translate solved
+  // from one projected node. Immune to stale caches and missed events.
+  var vis = Graph.graphData().nodes.filter(function(n){return !n._hidden;});
+  if(!vis.length) return {k:1,x:0,y:0};
+  var k = Graph.zoom();
+  if(!(k>0)){
+    var b = vis.length>1 ? vis[1] : vis[0];
+    var s1 = Graph.graph2ScreenCoords(vis[0].x, vis[0].y);
+    var s2 = Graph.graph2ScreenCoords(b.x, b.y);
+    var ds = Math.sqrt(Math.pow(s1.x-s2.x,2)+Math.pow(s1.y-s2.y,2));
+    var dg = Math.sqrt(Math.pow(vis[0].x-b.x,2)+Math.pow(vis[0].y-b.y,2)) || 1;
+    k = ds/dg || 1;
+  }
+  var s = Graph.graph2ScreenCoords(vis[0].x, vis[0].y);
+  return {k:k, x:s.x-k*vis[0].x, y:s.y-k*vis[0].y};
+}
+function pick(sx, sy){
+  // Own hit-testing against the live transform (see liveTransform): the
+  // lib's shadow-canvas picking drifts out of sync with the main camera,
+  // so hovers/clicks resolve here. Returns deepest hit or null.
+  var T = liveTransform();
+  var gx = (sx-T.x)/T.k, gy = (sy-T.y)/T.k, best=null, bd=0;
+  var all = Graph.graphData().nodes;
+  for(var i=0;i<all.length;i++){ var n=all[i];
+    if(n._hidden) continue;
+    var dx=n.x-gx, dy=n.y-gy;
+    var d = Math.sqrt(dx*dx+dy*dy)-nodeRadius(n)-6/T.k;
+    if(d<0 && (best===null || d<bd)){ best=n; bd=d; }
+  }
+  return best;
+}
 
 function mulberry(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;var t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 var STARS=(function(){var R=mulberry(20261007),s=[],i;for(i=0;i<340;i++){s.push({u:R(),v:R(),r:R()*1.3+0.3,a:R()*0.5+0.12,c:R()<0.14?"#c4b5fd":(R()<0.3?"#7dd3fc":"#ffffff")});}return s;})();
@@ -244,7 +279,7 @@ function resetVisibility(){
 function expandAll(){
   Graph.graphData().nodes.forEach(function(n){ n._hidden = !!n._bubble; });
 }
-function collapseAll(){ resetVisibility(); }
+function collapseAll(){ setPinned(null); resetVisibility(); }
 
 fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
   ALL = g; BYID = {};
@@ -314,29 +349,42 @@ fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r
         ctx.beginPath(); ctx.arc(s.u*w, s.v*h, s.r, 0, Math.PI*2); ctx.fill(); }
       ctx.restore(); ctx.globalAlpha = 1;
     })
-    .onNodeHover(function(n){
-      HOVERED = (n && !DIM[n.id]) ? n.id : null;
-      var tip = document.getElementById("tip");
-      if(n && !DIM[n.id]){ tip.innerHTML = tipHTML(n); tip.style.display="block"; moveTip(); }
-      else tip.style.display="none";
-      document.getElementById("stage").style.cursor = n ? "pointer" : "grab";
-    })
-    .onNodeClick(function(n){
-      if(DIM[n.id]) return;
-      if(n._bubble){ openBubble(n.id); return; }
-      setPinned(n.id);
-      var d = document.getElementById("info"); d.innerHTML = infoHTML(BYID[n.id]);
-      Graph.centerAt(n.x, n.y, 800);
-    })
-    .onBackgroundClick(function(){ setPinned(null); });
+    .onNodeHover(null).onNodeClick(null).onBackgroundClick(null);
   resetVisibility();
   Graph.zoomToFit(1400, 60);
 
   var stage = document.getElementById("stage");
-  stage.addEventListener("mousemove",function(ev){
+  function stagePos(ev){
     var r = stage.getBoundingClientRect();
-    LASTMOUSE.x = ev.clientX-r.left; LASTMOUSE.y = ev.clientY-r.top; moveTip();
+    return [ev.clientX-r.left, ev.clientY-r.top];
+  }
+  stage.addEventListener("mousemove",function(ev){
+    var p = stagePos(ev);
+    LASTMOUSE.x = p[0]; LASTMOUSE.y = p[1]; moveTip();
+    var n = pick(p[0], p[1]);
+    HOVERED = (n && !DIM[n.id]) ? n.id : null;
+    var tip = document.getElementById("tip");
+    if(n && !DIM[n.id]){ tip.innerHTML = tipHTML(n); tip.style.display="block"; moveTip(); }
+    else tip.style.display="none";
+    stage.style.cursor = n ? "pointer" : "grab";
   });
+  stage.addEventListener("mouseleave",function(){
+    HOVERED = null; document.getElementById("tip").style.display="none";
+  });
+  stage.addEventListener("click",function(ev){
+    if(Math.abs(ev.clientX-DOWN.x)+Math.abs(ev.clientY-DOWN.y) > 6) return; // was a pan
+    var p = stagePos(ev);
+    var n = pick(p[0], p[1]);
+    if(!n || DIM[n.id]){ setPinned(null); return; }
+    if(n._bubble){ openBubble(n.id); Graph.centerAt(n.x, n.y, 500); return; }
+    setPinned(n.id);
+    document.getElementById("info").innerHTML = infoHTML(BYID[n.id]);
+    Graph.centerAt(n.x, n.y, 800);
+  });
+  var DOWN={x:0,y:0};
+  // NOTE: pointerdown (not mousedown): legacy mouse events are not reliably
+  // delivered here, so the pan-vs-click guard keys off the pointer stream.
+  stage.addEventListener("pointerdown",function(ev){ DOWN.x=ev.clientX; DOWN.y=ev.clientY; });
   function moveTip(){
     var tip = document.getElementById("tip");
     if(tip.style.display!=="block") return;
