@@ -94,12 +94,24 @@ jobs:
           else
             git checkout --orphan gh-pages
           fi
-          git ls-files -z | xargs -0 -r rm -f
-          rm -rf develop
-          cp /tmp/combined-site/index.html /tmp/combined-site/graph.json .
+          # Wipe tracked files (plain rm -f cannot remove the `code/`
+          # submodule gitlink, so use rm -rf; then drop known leftover
+          # dirs so a removed path doesn't linger on the site).
+          git ls-files -z | xargs -0 -r rm -rf --
+          rm -rf develop docs state extra code .github
+          if [ -f /tmp/combined-site/index.html ]; then
+            cp /tmp/combined-site/index.html /tmp/combined-site/graph.json .
+          else
+            echo "warning: main docs/ missing — site root left empty"
+          fi
           cp /tmp/combined-site/.nojekyll . 2>/dev/null || touch .nojekyll
           mkdir -p develop
-          cp /tmp/combined-site/develop/index.html /tmp/combined-site/develop/graph.json develop/
+          if [ -f /tmp/combined-site/develop/index.html ]; then
+            cp /tmp/combined-site/develop/index.html /tmp/combined-site/develop/graph.json develop/
+          else
+            echo "warning: develop docs/ missing — /develop/ left empty"
+            rmdir develop 2>/dev/null || true
+          fi
           git add -A
           if git diff --cached --quiet; then
             echo "gh-pages already up to date."
