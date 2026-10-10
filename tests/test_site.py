@@ -251,6 +251,9 @@ def test_rendered_page_observatory_contract(tmp_path):
                    "d3ReheatSimulation", "onEngineStop",
                    "zoomToFit", "centerAt", "pauseAnimation",
                    "setPinned", "openBubble", "expandAll", "collapseAll",
+                   "TRAIL", "goTrail", "reveal(", "trailHTML", "topHTML",
+                   "childClusters", "memberArtists",
+                   "data-bubble", "data-trail", "data-back", "data-collapse",
                    "pick(", "nodeRadius(", "liveTransform(", "graph2ScreenCoords",
                    "DIM", "SHOW_E", "onRenderFramePre"):
         assert marker in page, marker

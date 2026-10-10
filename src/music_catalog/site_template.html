@@ -88,7 +88,7 @@ footer code{color:var(--txt)}
     <button id="f-reset">Reset</button>
   </div>
 </div>
-<aside id="info" class="panel"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan or drag a node to move it. Force layout settles the graph live: filters only fade out non-matches.</p></aside>
+<aside id="info" class="panel"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. This panel tracks your trail as you open bubbles, with Back / Collapse to go back. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan or drag a node to move it. Force layout settles the graph live: filters only fade out non-matches.</p></aside>
 <div id="tip"></div>
 <footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Needs http (<code>python3 -m http.server</code>) — file:// blocks graph.json.</footer>
 <script crossorigin="anonymous" src="__FG_CDN__"></script>
@@ -149,7 +149,51 @@ function infoHTML(n){
   return h;
 }
 function bubbleHTML(c){
-  return "<h2>"+escapeHTML(c.label)+"</h2><p><b>"+c.count+"</b> artist(s) · click the bubble to open it</p>";
+  var kids = childClusters(c.id);
+  var h = "<h2>"+escapeHTML(c.label)+"</h2><p>"+trailHTML()+"</p>";
+  if(kids.length){
+    h += "<p>Opened — <b>"+kids.length+"</b> subgroup(s), <b>"+c.count+"</b> artists. Click a subgroup to open it.</p><ul>";
+    h += kids.map(function(k){
+      return "<li><a data-bubble='cluster:"+k.id+"'>"+escapeHTML(k.label)+"</a> ("+k.count+")</li>";}).join("");
+    h += "</ul>";
+  } else {
+    var ms = memberArtists(c.id, 12);
+    h += "<p>Opened — <b>"+c.count+"</b> artist(s). Click one to pin it.</p><ul>";
+    h += ms.map(function(m){
+      return "<li><a data-id='"+m.id+"'>"+escapeHTML(m.name)+"</a> ("+m.tracks+" tracks)</li>";}).join("");
+    h += "</ul>";
+    if(c.count>ms.length) h += "<p>…and "+(c.count-ms.length)+" more — search above or Expand all.</p>";
+  }
+  h += "<p><a data-back>‹ Back</a> · <a data-collapse>Collapse all</a></p>";
+  return h;
+}
+function topHTML(){
+  var tops = ALL.clusters.filter(function(c){return !c.parent;})
+    .sort(function(a,b){return (b.count-a.count)||(a.label<b.label?-1:1);});
+  var h = "<h2>All groups</h2><p>"+ALL.nodes.length+" artists in "+tops.length+" groups — click a bubble to open it.</p><ul>";
+  h += tops.map(function(t){
+    return "<li><a data-bubble='cluster:"+t.id+"'>"+escapeHTML(t.label)+"</a> ("+t.count+")</li>";}).join("");
+  return h + "</ul>";
+}
+function trailHTML(){
+  var h = "<a data-trail='-1'>Top</a>";
+  for(var i=0;i<TRAIL.length;i++){
+    var c=null,j;
+    for(j=0;j<ALL.clusters.length;j++){ if(ALL.clusters[j].id===TRAIL[i]){c=ALL.clusters[j];break;} }
+    h += " › " + (i===TRAIL.length-1
+      ? "<b>"+escapeHTML(c?c.label:TRAIL[i])+"</b>"
+      : "<a data-trail='"+i+"'>"+escapeHTML(c?c.label:TRAIL[i])+"</a>");
+  }
+  return h;
+}
+function childClusters(cid){
+  return ALL.clusters.filter(function(c){return c.parent===cid;})
+    .sort(function(a,b){return (b.count-a.count)||(a.label<b.label?-1:1);});
+}
+function memberArtists(cid, lim){
+  return ALL.nodes.filter(function(n){return n.cluster===cid;})
+    .sort(function(a,b){return (b.tracks-a.tracks)||(b.pop-a.pop)||(a.name<b.name?-1:1);})
+    .slice(0, lim||12);
 }
 function tipHTML(n){
   if(n._bubble){var c=ALL.clusters.filter(function(x){return "cluster:"+x.id===n.id;})[0];
@@ -248,18 +292,33 @@ function setPinned(id){
     HL={nodes:nb,links:eb};
   }
 }
-function openBubble(cid){
+var TRAIL=[];
+function reveal(cid){
   var meta=null,i;
   for(i=0;i<ALL.clusters.length;i++){ if("cluster:"+ALL.clusters[i].id===cid){meta=ALL.clusters[i];break;} }
-  showBubbleInfo(cid);
+  if(!meta) return false;
   Graph.graphData().nodes.forEach(function(n){ if(n.id===cid) n._hidden=true; });
-  var kids = ALL.clusters.filter(function(c){return c.parent===(meta&&meta.id);});
+  var kids = ALL.clusters.filter(function(c){return c.parent===meta.id;});
   if(kids.length){
     var kset={}; kids.forEach(function(c){kset["cluster:"+c.id]=true;});
     Graph.graphData().nodes.forEach(function(n){ if(kset[n.id]) n._hidden=false; });
-  } else if(meta){
+  } else {
     Graph.graphData().nodes.forEach(function(n){ if(!n._bubble && n.cluster===meta.id) n._hidden=false; });
   }
+  return true;
+}
+function openBubble(cid){
+  if(!reveal(cid)) return;
+  if(TRAIL[TRAIL.length-1]!==cid) TRAIL.push(cid);
+  showBubbleInfo(cid);
+  if(Graph.d3ReheatSimulation) Graph.d3ReheatSimulation();
+}
+function goTrail(idx){
+  TRAIL = idx<0 ? [] : TRAIL.slice(0, idx+1);
+  resetVisibility();
+  for(var i=0;i<TRAIL.length;i++) reveal(TRAIL[i]);
+  if(TRAIL.length) showBubbleInfo(TRAIL[TRAIL.length-1]);
+  else document.getElementById("info").innerHTML = topHTML();
   if(Graph.d3ReheatSimulation) Graph.d3ReheatSimulation();
 }
 function showBubbleInfo(cid){
@@ -278,10 +337,12 @@ function resetVisibility(){
   });
 }
 function expandAll(){
+  TRAIL=[];
   Graph.graphData().nodes.forEach(function(n){ n._hidden = !!n._bubble; });
+  document.getElementById("info").innerHTML = "<h2>All artists</h2><p>Every bubble open — "+ALL.nodes.length+" artists visible. Click one to pin it.</p><p><a data-collapse>Collapse all</a></p>";
   if(Graph.d3ReheatSimulation) Graph.d3ReheatSimulation();
 }
-function collapseAll(){ setPinned(null); resetVisibility(); }
+function collapseAll(){ setPinned(null); TRAIL=[]; resetVisibility(); document.getElementById("info").innerHTML = topHTML(); }
 
 fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
   ALL = g; BYID = {};
@@ -409,11 +470,22 @@ fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r
     tip.style.left = x+"px"; tip.style.top = y+"px";
   }
   document.getElementById("info").addEventListener("click",function(ev){
-    var a = ev.target.closest ? ev.target.closest("a[data-id]") : null;
-    if(a){ev.preventDefault();var id=a.getAttribute("data-id");if(DIM[id]||!BYID[id])return;
-      setPinned(id);document.getElementById("info").innerHTML=infoHTML(BYID[id]);
-      var p=Graph.graphData().nodes.filter(function(n){return n.id===id;})[0];
-      if(p) Graph.centerAt(p.x,p.y,800);}
+    var a = ev.target.closest ? ev.target.closest("a") : null;
+    if(!a) return;
+    ev.preventDefault();
+    if(a.hasAttribute("data-bubble")){
+      var cid=a.getAttribute("data-bubble"); openBubble(cid);
+      var q=Graph.graphData().nodes.filter(function(n){return n.id===cid;})[0];
+      if(q) Graph.centerAt(q.x,q.y,500);
+      return;
+    }
+    if(a.hasAttribute("data-trail")){ goTrail(parseInt(a.getAttribute("data-trail"),10)); return; }
+    if(a.hasAttribute("data-back")){ goTrail(TRAIL.length-2); return; }
+    if(a.hasAttribute("data-collapse")){ collapseAll(); return; }
+    var id=a.getAttribute("data-id"); if(!id||DIM[id]||!BYID[id])return;
+    setPinned(id);document.getElementById("info").innerHTML=infoHTML(BYID[id]);
+    var p=Graph.graphData().nodes.filter(function(n){return n.id===id;})[0];
+    if(p) Graph.centerAt(p.x,p.y,800);
   });
   ["q","f-source","f-tracks","f-pop","f-edges"].forEach(function(id){
     document.getElementById(id).addEventListener("input",function(){
