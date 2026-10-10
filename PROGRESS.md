@@ -37,6 +37,51 @@ Log: last green commit + next box here on every stop.
   802 artists sit in `unknown` (stays flat, not bubbled) until
   `catalog tags set` curation or phase-B enrichment fills genres —
   bubbles then appear automatically on republish.
+- 2026-10-06: page frozen + fast — nodes `fixed` at stored
+  positions (physics toggle removed, node dragging off), hover does
+  one border update instead of ~4800 redraws, highlight/filter
+  paints are single batched updates, click-focus without animation;
+  filters dim non-matches (transparent + unclickable) instead of
+  hiding, positions never change; export de-collides stacks
+  (deterministic 30px spiral spread, stable across exports).
+- 2026-10-06: decluttered — k=2 + cap 12 (802 nodes/2907 edges,
+  max deg exactly 12, 0 isolated), edges hidden by default with
+  neighbourhood reveal on hover/select, label-propagation community
+  bubbles (stored centers, neutral Group N labels) so clustering
+  works with zero genre tags; node color follows taxonomy hue
+  (gray = untagged), tagged artists migrate to genre bubbles on
+  republish.
+- 2026-10-10: clicks fixed — the pan-vs-click guard listened for
+  `mousedown`, which never arrives here (only pointer events do), so
+  every click looked like a pan and was ignored; bubbles seemed to
+  "disappear" (they never opened). Guard now keys off
+  `pointerdown`. Also `collapseAll` clears a stale pin. Verified
+  with real scripted browser clicks: open group → 8/8 subs, open
+  sub → 21 artists, pin artist + info panel, collapse restores
+  99 bubbles, zero errors.
+- 2026-10-10: observatory redesign (researched: 3d-force-graph /
+  cosmograph / sigma.js / deck.gl — picked 2D canvas force-graph
+  1.52.0: full glow control, zero module/three-copy risk, our data
+  is intrinsically flat anyway). Dark constellation UI: glow nodes,
+  CSS + canvas starfield, glass panels, animated link particles on
+  pin, tooltips, zoom-to-focus, labels declutter by zoom. Fixed two
+  real bugs found by probing: custom paint needs absolute coords
+  (lib does no per-node translate) and x/y must be preset alongside
+  fx/fy or zoomToFit computes a NaN camera (black screen). Verified
+  with in-browser probes + screenshots.
+- 2026-10-06: hierarchy + local weights — two-level bubbles
+  (group → subgroup, median-cut leaves ≤ 40 artists, split tops
+  bubble too: Group 1's 172 now opens to 8 leaves of ~21),
+  per-level trim budgets (4/2/1, union, cannot isolate) down to
+  1975 edges, per-edge local weight `w` (1 = both endpoints'
+  closest) driving display width; similarity queries untouched
+  (vectors, not edges).
+- 2026-10-06: hover no longer dims (it stuck faded once pinned —
+  blur skipped clearing while pinned). Hover = info + link preview
+  + border only; click pins the neighbourhood focus. Highlight
+  repaints are full but batched (two update calls); verified with
+  an in-browser probe: 8/8 interaction checks pass
+  (collapse/hover/pin/unpin/nested open roundtrip).
 
 - 2026-10-06: post-v1 extras on `develop` (uncommitted) — github.io
   browser (`catalog viz --out-dir docs/`: vis-network force graph,

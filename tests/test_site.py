@@ -6,7 +6,8 @@ from music_catalog.viz import (
     build_graph,
     catalog_fingerprint,
     cluster_for,
-    color_for,
+    communities,
+    genre_color,
     render_site,
 )
 
@@ -38,9 +39,12 @@ def test_acronym_for():
     assert acronym_for("Édith Piaf") == "EP"
 
 
-def test_color_for_deterministic():
-    assert color_for("a1") == color_for("a1")
-    assert color_for("a1").startswith("hsl(")
+def test_genre_color_taxonomy_hue_and_gray():
+    assert genre_color("pop").startswith("hsl(")
+    assert genre_color("pop") != genre_color("rock")
+    assert genre_color("pop") == genre_color("pop")
+    assert genre_color("other") == genre_color("unknown") == "hsl(0, 0%, 74%)"
+    assert genre_color("group-a1") == "hsl(0, 0%, 74%)"
 
 
 def test_build_graph_knn_and_exclusion():
@@ -83,10 +87,52 @@ def test_max_degree_cap():
     for e in g["edges"]:
         deg[e["a"]] += 1
         deg[e["b"]] += 1
-    assert max(deg.values()) <= MAX_DEGREE == 20
+    assert max(deg.values()) <= MAX_DEGREE
     assert set(deg) == {f"a{i:02d}" for i in range(30)}  # nobody isolated
     g2 = build_graph(_hub_farm(), k=3)
     assert g["edges"] == g2["edges"]
+
+
+def test_communities_deterministic_and_covering():
+    g = build_graph(_hub_farm(), k=3)
+    ids = [n["id"] for n in g["nodes"]]
+    c1 = communities(ids, g["edges"])
+    c2 = communities(ids, g["edges"])
+    assert c1 == c2
+    assert set(c1) == set(ids)
+    # every community with 2+ members becomes a bubble with a stored center
+    bubbles = {c["id"] for c in g["clusters"]}
+    assert {n["cluster"] for n in g["nodes"]} <= bubbles
+
+
+def test_untagged_artists_bubble_by_community_not_unknown():
+    g = build_graph(_hub_farm(), k=3)
+    assert not any(n["cluster"] == "unknown" for n in g["nodes"])
+    assert any(n["cluster"].startswith("group-") for n in g["nodes"])
+    assert all(n["color"] == "hsl(0, 0%, 74%)" for n in g["nodes"])
+
+
+def test_big_blobs_split_into_bounded_leaves():
+    big = _hub_farm(n=100)
+    g = build_graph(big, k=3)
+    kids = {c["id"] for c in g["clusters"] if c.get("parent")}
+    childless = [c for c in g["clusters"] if c["id"] not in {c.get("parent") for c in g["clusters"] if c.get("parent")}]
+    # every bubble that opens straight to artists holds <= 40 of them
+    assert all(c["count"] <= 40 for c in childless), [(c["id"], c["count"]) for c in childless]
+    # every artist sits in a childless (directly openable) bubble
+    assert {n["cluster"] for n in g["nodes"]} == {c["id"] for c in childless}
+    labels = [c["label"] for c in g["clusters"]]
+    assert len(set(labels)) == len(labels)  # unique bubble labels
+    g2 = build_graph(big, k=3)
+    assert g["clusters"] == g2["clusters"]
+
+
+def test_tagged_artists_keep_genre_bubble_and_hue():
+    g = build_graph(_catalog(), k=2)
+    by_id = {n["id"]: n for n in g["nodes"]}
+    assert by_id["a1"]["cluster"] == "pop"  # track genre vote
+    assert by_id["a3"]["cluster"] == "jazz"
+    assert by_id["a1"]["color"] == genre_color("pop") != "hsl(0, 0%, 74%)"
 
 
 def test_cluster_for_rolls_up_and_defaults():
@@ -101,14 +147,47 @@ def test_build_graph_clusters_cover_nodes_with_stored_centers():
     g1 = build_graph(_catalog(), k=2)
     ids = {c["id"] for c in g1["clusters"]}
     assert {n["cluster"] for n in g1["nodes"]} <= ids
+    assert {n["top"] for n in g1["nodes"]} <= ids | {c.get("parent") for c in g1["clusters"] if c.get("parent")}
     by_id = {n["id"]: n for n in g1["nodes"]}
+    kids: dict = {}
     for c in g1["clusters"]:
-        members = [by_id[n["id"]] for n in g1["nodes"] if n["cluster"] == c["id"]]
+        if c.get("parent"):
+            kids.setdefault(c["parent"], []).append(c["id"])
+    for c in g1["clusters"]:
+        if c.get("parent") or c["id"] not in kids:
+            members = [by_id[n["id"]] for n in g1["nodes"] if n["cluster"] == c["id"]]
+        else:  # split top: members are the leaves' artists
+            members = [by_id[n["id"]] for n in g1["nodes"] if n["top"] == c["id"]]
         assert c["count"] == len(members) >= 1
         assert c["x"] == round(sum(m["x"] for m in members) / len(members), 1)
         assert c["y"] == round(sum(m["y"] for m in members) / len(members), 1)
+        if c.get("parent"):
+            assert c["parent"] in ids
+            assert all(by_id[n["id"]]["top"] == c["parent"] for n in members)
     g2 = build_graph(_catalog(), k=2)
     assert g1["clusters"] == g2["clusters"]
+
+
+def test_edge_trim_budgets_and_local_weights():
+    from music_catalog.viz import TRIM_BUDGETS
+    g = build_graph(_hub_farm(), k=3)
+    assert all(e["lvl"] in (0, 1, 2) for e in g["edges"])
+    assert all(0.0 < e["w"] <= 1.0 for e in g["edges"])
+    assert not any(k.startswith("rank_") for e in g["edges"] for k in e)
+    per_node: dict = {}
+    for e in g["edges"]:
+        for u in (e["a"], e["b"]):
+            per_node.setdefault(u, {}).setdefault(e["lvl"], 0)
+            per_node[u][e["lvl"]] += 1
+    # union rule: a node may exceed budget via partner-kept edges, but its
+    # own closest link of each kind always survives (no trim isolates)
+    degs: dict = {}
+    for e in g["edges"]:
+        degs[e["a"]] = degs.get(e["a"], 0) + 1
+        degs[e["b"]] = degs.get(e["b"], 0) + 1
+    assert set(degs) == {n["id"] for n in g["nodes"]}
+    assert max(degs.values()) <= MAX_DEGREE
+    assert TRIM_BUDGETS == {0: 4, 1: 2, 2: 1}
 
 
 def test_render_site_writes_graph_and_page(tmp_path):
@@ -116,7 +195,7 @@ def test_render_site_writes_graph_and_page(tmp_path):
     assert summary["nodes"] == 3
     assert (tmp_path / "site" / "graph.json").exists()
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
-    assert "vis-network" in page and "graph.json" in page
+    assert "ForceGraph" in page and "graph.json" in page
 
 
 def test_catalog_fingerprint_stable_and_sensitive():
@@ -139,4 +218,38 @@ def test_render_site_stamps_meta(tmp_path):
     assert g["meta"]["catalog_sha256"] == catalog_fingerprint(_catalog())
     assert g["meta"]["generated_at"]
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
-    assert "freshnessLine" in page and "catalog_sha256" in page
+    assert "catalog_sha256" in page and "updated " in page
+
+
+def test_spread_separates_stacks_deterministically():
+    from music_catalog.viz import _spread
+    import math
+    stacked = [(100.0, 100.0)] * 10 + [(500.0, 500.0)]
+    a = _spread(stacked)
+    b = _spread(stacked)
+    assert a == b  # deterministic
+    for i in range(10):
+        for j in range(i + 1, 10):
+            dx, dy = a[i][0] - a[j][0], a[i][1] - a[j][1]
+            assert math.hypot(dx, dy) >= 30.0 - 1e-9
+    assert a[10] == (500.0, 500.0)  # isolated point untouched
+
+
+def test_rendered_page_observatory_contract(tmp_path):
+    render_site(_catalog(), tmp_path / "site")
+    page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
+    assert "vis-network" not in page and "f-phys" not in page
+    assert 'id="f-edges" type="checkbox"> links' in page  # links off by default
+    for marker in ("ForceGraph", "nodeCanvasObject", "nodeCanvasObjectMode",
+                   "nodePointerAreaPaint", "nodeVisibility",
+                   "linkColor", "linkWidth", "linkLineDash",
+                   "stage.addEventListener",
+                   "autoPauseRedraw(false)", "enableNodeDrag(false)",
+                   "zoomToFit", "centerAt", "pauseAnimation",
+                   "setPinned", "openBubble", "expandAll", "collapseAll",
+                   "pick(", "nodeRadius(", "liveTransform(", "graph2ScreenCoords",
+                   "DIM", "SHOW_E", "onRenderFramePre"):
+        assert marker in page, marker
+    assert "cooldownTicks" not in page  # engine left running: live accessors
+    assert "ctx.arc(x,y" in page  # custom paint uses absolute coords (lib does no translate)
+    assert "x:n.x, y:n.y, fx:n.x, fy:n.y" in page  # preset x/y: bbox/zoom valid pre-tick
