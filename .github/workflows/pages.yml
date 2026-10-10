@@ -1,0 +1,111 @@
+# Combined GitHub Pages deploy: main -> site root, develop -> /develop/.
+#
+# GitHub Pages serves ONE site per repo, so both branches share a single
+# `gh-pages` branch: the root holds main's docs/, `develop/` holds
+# develop's docs/. A push to either branch rebuilds both paths from
+# origin/main + origin/develop, then updates gh-pages.
+# Pages setting (one manual step, data repo):
+#   Settings -> Pages -> Deploy from branch -> gh-pages / (root).
+# Live URLs after that:
+#   https://sandorkazi.github.io/music-catalog-masu/         (main)
+#   https://sandorkazi.github.io/music-catalog-masu/develop/ (develop)
+#
+# This file is tracked in BOTH repos (code-repo copy is the template,
+# data-repo copy is live); the job only runs in the data repo, which is
+# the only one with a docs/ site.
+
+name: Deploy Pages (main + develop)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'sandorkazi/music-catalog-masu'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assemble combined site
+        run: |
+          python3 - <<'EOF'
+          import pathlib, shutil, subprocess
+
+          def show(ref, path):
+              p = subprocess.run(["git", "show", f"{ref}:{path}"],
+                                 capture_output=True)
+              return p.stdout if p.returncode == 0 else None
+
+          BANNER_CSS = ("position:fixed;right:14px;bottom:10px;z-index:9;"
+                        "font:12px system-ui,sans-serif;color:#8b98b8;"
+                        "background:rgba(10,16,32,.8);"
+                        "border:1px solid rgba(140,180,255,.25);"
+                        "border-radius:8px;padding:4px 10px")
+
+          def banner(inner):
+              return f'<div id="branch-banner" style="{BANNER_CSS}">{inner}</div>'
+
+          out = pathlib.Path("/tmp/combined-site")
+          shutil.rmtree(out, ignore_errors=True)
+          (out / "develop").mkdir(parents=True)
+
+          for ref, dest, inner in [
+              ("origin/main", out,
+               'stable (main) \u00b7 '
+               '<a style="color:#7dd3fc" href="./develop/">develop preview</a>'),
+              ("origin/develop", out / "develop",
+               'develop preview \u00b7 '
+               '<a style="color:#7dd3fc" href="../">stable</a>'),
+          ]:
+              idx = show(ref, "docs/index.html")
+              gra = show(ref, "docs/graph.json")
+              if idx is None or gra is None:
+                  print(f"warning: docs/ missing on {ref}, skipping {dest}")
+                  continue
+              html = idx.decode().replace("<body>", "<body>" + banner(inner), 1)
+              (dest / "index.html").write_bytes(html.encode())
+              (dest / "graph.json").write_bytes(gra)
+              print(f"{ref} -> {dest}: {len(gra)} bytes graph.json")
+          (out / ".nojekyll").write_text("")
+          EOF
+
+      - name: Publish to gh-pages
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages || true
+          if git rev-parse --verify --quiet refs/remotes/origin/gh-pages >/dev/null; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+          fi
+          git ls-files -z | xargs -0 -r rm -f
+          rm -rf develop
+          cp /tmp/combined-site/index.html /tmp/combined-site/graph.json .
+          cp /tmp/combined-site/.nojekyll . 2>/dev/null || touch .nojekyll
+          mkdir -p develop
+          cp /tmp/combined-site/develop/index.html /tmp/combined-site/develop/graph.json develop/
+          git add -A
+          if git diff --cached --quiet; then
+            echo "gh-pages already up to date."
+          else
+            MAIN_SHA=$(git rev-parse --short origin/main)
+            DEV_SHA=$(git rev-parse --short origin/develop)
+            git commit -m "pages: main $MAIN_SHA + develop $DEV_SHA"
+            git push origin gh-pages
+          fi

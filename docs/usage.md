@@ -158,9 +158,22 @@ Each export stamps `graph.json → meta` (`catalog_sha256` +
 `generated_at`); the page header shows "updated … · catalog …", and
 `--check` compares the stamp against the current catalog, so a stale
 site is detectable without rebuilding. Re-publish whenever the
-catalog changes. Enable Pages with `Settings → Pages → Deploy from
-branch → docs/` **on the data repo**
-(`https://<user>.github.io/music-catalog-masu/`).
+catalog changes.
+
+Both branches are served from one Pages site (Pages supports a single
+site per repo): the `gh-pages` branch holds main's `docs/` at the
+site root and develop's `docs/` under `develop/`, rebuilt automatically
+by `.github/workflows/pages.yml` on every push to `main`/`develop`
+that touches `docs/` (same file is tracked in this repo as the
+template — the job itself only runs in the data repo):
+
+- `https://<user>.github.io/music-catalog-masu/` — stable (`main`)
+- `https://<user>.github.io/music-catalog-masu/develop/` — preview (`develop`)
+
+One manual step, once, on the data repo: `Settings → Pages →
+Deploy from branch → gh-pages / (root)`. Each half of the site carries
+a banner linking to the other half; `fetch("graph.json")` is relative
+so it works unchanged under the `/develop/` subpath.
 
 The data repo carries this code repo as a `code/` submodule, so any
 data checkout pins the exact generator version its `docs/` was built

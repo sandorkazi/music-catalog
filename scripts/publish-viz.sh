@@ -50,6 +50,6 @@ if [[ "$COMMIT" == 1 ]]; then
     graph=$(PYTHONPATH="$CODE_DIR/src" python3 -c \
       "import json; g=json.load(open('$DATA_DIR/docs/graph.json')); print(f\"{len(g['nodes'])} nodes/{len(g['edges'])} edges\")")
     git -C "$DATA_DIR" commit -m "viz: refresh Pages browser ($graph)" -- docs/graph.json docs/index.html
-    echo "committed in $DATA_DIR. Push + ensure Pages serves docs/ (Settings -> Pages -> Deploy from branch -> docs/)."
+    echo "committed in $DATA_DIR. Push: the pages workflow rebuilds the combined site (root=main, /develop/=develop) on gh-pages."
   fi
 fi

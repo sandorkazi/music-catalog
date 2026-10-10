@@ -11,6 +11,14 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-11: Pages serves both branches — one site on `gh-pages`
+  (root = main's `docs/`, `/develop/` = develop's `docs/`), rebuilt by
+  `.github/workflows/pages.yml` on push to `main`/`develop` (tracked in
+  both repos, runs in the data repo; manual step: Pages → Deploy from
+  branch → `gh-pages` / root). `docs/usage.md`, data-repo README,
+  `AGENTS.md`, `publish-viz.sh` updated. Next: push both repos, wait for
+  the workflow to create `gh-pages`, flip the Pages setting.
+
 - 2026-10-06: viz home moved to the data repo — live Pages browser
   (`docs/graph.json` + `docs/index.html`, 802 nodes/1793 edges) is
   generated natively from `music-catalog-masu/state/catalog.json` via
