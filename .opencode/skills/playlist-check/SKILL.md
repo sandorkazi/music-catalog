@@ -57,6 +57,18 @@ bash scripts/sync-data.sh status  # pull / push for the data repo
   (monitor). `matched_exact`/`known_track` = already covered.
 - If there is nothing new, say so and stop. Do not commit.
 
+Field notes (learned 2026-10-10): most real playlist titles do NOT
+parse verbatim (no `Artist - Title` separator, colon without leading
+space, leading pipes) — expect curated `Artist - Title` attribution
+entries for unknowns, with the user's attribution as authority. For
+ambiguous titles (track name as video title, empty titles), fetch the
+video description (`yt-dlp --print "%(title)s || %(channel)s ||
+%(description)s"`) before attributing — it often names the real
+track/artist (and exposes covers: Seren Saraç's entry is a Barış Manço
+song). Save the fresh flat export to the data repo as
+`extra/youtube-<name>-<PLID>-<YYYYMMDD>.json` (dated; never overwrite
+the previous dump).
+
 ## 2. Prepare one consultation per new entry
 
 For each new item, collect and show the user:
@@ -116,8 +128,23 @@ Tell the user, per candidate artist:
      and explicit user approval per side.
   A genuine joint anthem may still represent both sides — but only as
   an explicit user decision, never by accident.
+- **Alias-tangle check:** a "new" name may already exist as an alias
+  (`Jay Smith` → alias of Smash Into Pieces) or as an empty Spotify
+  record (same Spotify id). Import under the parsed name, then finish
+  with an explicit `artist merge --keep <spotify-id> --drop <youtube-id>`
+  so tracks land on the canonical record. State the merge plainly when
+  asking, so approval covers it.
+- **Spotify-availability test** for obscure acts/DJ sets: if neither
+  the playlist track nor any candidate companion is on Spotify, say so
+  and let the user decide (abandon sets vs YouTube-only credit).
+  One-hit wonders may have exactly one other original on vinyl only
+  (Energy 52's `Weak`, 1993) — present the Spotify-backed remix vs the
+  YouTube-only original as an explicit choice.
 - Then ask: add this track for this artist? Yes / no / different
-  artist. Respect a no — skip to step 5 with the rest.
+  artist. Respect a no — skip to step 5 with the rest. Park refused or
+  deferred non-tracks in a dated todo file with full details
+  (`extra/youtube-todo-<YYYYMMDD>.md`: video id, title, channel, URL,
+  reason) for the data commit — never silently dropped.
 
 ## 4. Propose a companion track (per approved entry)
 
@@ -157,6 +184,18 @@ new entry:
   ```
   (Note: `--dry-run` dedups by id and enforces the cap, but does not
   flag shared-representative credit — that check lives in step 3.)
+  The dry-run must show `unknowns: 0` for curated attributions; any
+  leftover unknown means the `Artist - Title` form didn't parse —
+  fix the separator before applying. Companion videos found outside
+  the playlist go in the curated file in YouTube-shape
+  (`{"entries": [{"id", "title": "Artist - Track", "channel", ...}]}`);
+  resolve their ids with `yt-dlp "ytsearchN:<artist title>"` and
+  eyeball title/channel rather than inventing links. Multi-artist
+  video titles credit the primary only — unrecorded collaborators stay
+  invisible unless the user asks for aliases. One `track_id` can only
+  ever represent one author (global dedup): crediting a shared
+  recording to EVO today means satirin/FUNK DEMON can't re-add the
+  same video tomorrow — say this out loud when splitting collabs.
 - Summarize the reports (`added_artists / added_tracks /
   duplicate_tracks / capped_tracks / unknowns / pending_merges`).
   Route leftovers: `unknown` → review queue, `fuzzy`/`pending_merges`
