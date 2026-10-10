@@ -51,6 +51,16 @@ Log: last green commit + next box here on every stop.
   works with zero genre tags; node color follows taxonomy hue
   (gray = untagged), tagged artists migrate to genre bubbles on
   republish.
+- 2026-10-10: observatory redesign (researched: 3d-force-graph /
+  cosmograph / sigma.js / deck.gl — picked 2D canvas force-graph
+  1.52.0: full glow control, zero module/three-copy risk, our data
+  is intrinsically flat anyway). Dark constellation UI: glow nodes,
+  CSS + canvas starfield, glass panels, animated link particles on
+  pin, tooltips, zoom-to-focus, labels declutter by zoom. Fixed two
+  real bugs found by probing: custom paint needs absolute coords
+  (lib does no per-node translate) and x/y must be preset alongside
+  fx/fy or zoomToFit computes a NaN camera (black screen). Verified
+  with in-browser probes + screenshots.
 - 2026-10-06: hierarchy + local weights — two-level bubbles
   (group → subgroup, median-cut leaves ≤ 40 artists, split tops
   bubble too: Group 1's 172 now opens to 8 leaves of ~21),

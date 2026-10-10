@@ -11,9 +11,10 @@ Hover shows labels (SVG <title>), click fills an inspect panel
 
 ``build_graph`` / ``render_site`` power the GitHub Pages browser
 (``catalog viz --out-dir <data-repo>/docs``): a kNN similarity graph
-(nodes = in-catalog artists with acronym-in-circle placeholders,
-edges = top-k nearest neighbours) rendered with vis-network
-(force layout, zoom, hover info panel, filters) from ``graph.json``.
+(nodes = in-catalog artists, edges = trimmed similarity links)
+rendered as a midnight-constellation canvas (force-graph 2D custom
+paint: glow nodes, faint links, bubbles, tooltips) from ``graph.json``.
+Page template lives in ``site_template.html`` beside this module.
 
 The live site lives in the *data* repo (``docs/graph.json`` +
 ``docs/index.html``), generated natively from that repo's own
@@ -312,7 +313,7 @@ MAX_DEGREE = 12  # hard cap on edges per node (hubs keep their closest links)
 # Display trim budgets per edge level (see build_graph): how many of each
 # kind a node keeps — closest wins. Union over both endpoints.
 TRIM_BUDGETS = {0: 4, 1: 2, 2: 1}  # 0 intra-subgroup, 1 intra-group, 2 cross-group
-VIS_CDN = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+FG_CDN = "https://cdn.jsdelivr.net/npm/force-graph@1.52.0/dist/force-graph.min.js"
 
 
 def acronym_for(name: str) -> str:
@@ -631,265 +632,16 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
             "clusters": clusters}
 
 
-SITE_TEMPLATE = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__</title>
-<style>
-body{font-family:sans-serif;margin:0;padding:0 1em;max-width:1200px;margin-inline:auto}
-#toolbar{display:flex;flex-wrap:wrap;gap:.75em;align-items:center;margin:.75em 0}
-#toolbar label{font-size:.85em}
-#layout{display:grid;grid-template-columns:1fr 280px;gap:1em}
-#network{border:1px solid #ccc;height:70vh;min-height:420px}
-#info{border:1px solid #ccc;padding:.75em;font-size:.9em;max-height:70vh;overflow:auto}
-#info h2{margin:.2em 0;font-size:1.1em}
-#info ul{padding-left:1.2em;margin:.4em 0}
-footer{color:#666;font-size:.8em;margin:1em 0 2em}
-@media(max-width:800px){#layout{grid-template-columns:1fr}}
-</style></head><body>
-<h1>__TITLE__</h1>
-<p id="counts">Loading…</p>
-<div id="toolbar">
-<label>Search <input id="q" type="search" placeholder="artist name"></label>
-<label>Source <select id="f-source"><option value="">all</option></select></label>
-<label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
-<label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
-<label title="Show all similarity links (hidden until hover otherwise)"><input id="f-edges" type="checkbox"> edges</label>
-<button id="f-expand" title="Open every genre bubble">Expand all</button>
-<button id="f-collapse" title="Collapse back to genre bubbles">Collapse all</button>
-<button id="f-reset">Reset</button>
-</div>
-<div id="layout">
-<div id="network" role="application" aria-label="Artist similarity graph. Scroll to zoom, drag to pan."></div>
-<aside id="info"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves. Gray nodes are untagged; colors follow genre.</p></aside>
-</div>
-<footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here. Mistake? File a takedown via the repo issues page.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Local preview needs http (`python3 -m http.server`) — opening via file:// blocks graph.json.</footer>
-<script src="__VIS_CDN__"></script>
-<script>
-var ALL = null, network = null, nodes = null, edges = null, pinned = null;
-function infoHTML(n){
-  var sims = ALL.edges.filter(function(e){return e.a===n.id||e.b===n.id;})
-    .map(function(e){var o=e.a===n.id?e.b:e.a;var m=ALL.byId[o];return {n:m,d:e.dist};})
-    .sort(function(x,y){return x.d-y.d;}).slice(0,5);
-  var h = "<h2>"+escapeHTML(n.name)+"</h2><p>"+n.tracks+" track(s) · pop "+n.pop+" · "+n.sources.join(", ")+"</p>";
-  h += "<p><strong>Nearest neighbours</strong></p><ul>"+sims.map(function(s){
-    return "<li><a href='#' data-id='"+s.n.id+"'>"+escapeHTML(s.n.name)+"</a> ("+s.d.toFixed(2)+")</li>";}).join("")+"</ul>";
-  return h;
-}
-function escapeHTML(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
-function passFilters(n){
-  var src = document.getElementById("f-source").value;
-  var mt = parseInt(document.getElementById("f-tracks").value,10);
-  var mp = parseInt(document.getElementById("f-pop").value,10);
-  var q = document.getElementById("q").value.trim().toLowerCase();
-  if(src && n.sources.indexOf(src)<0) return false;
-  if(n.tracks<mt||n.pop<mp) return false;
-  if(q && n.name.toLowerCase().indexOf(q)<0) return false;
-  return true;
-}
-var DIM = {}; // id -> true while filtered out (transparent + unclickable, never moved)
-var HL = null; // {nodes:{}, edges:{}} neighbourhood of the PINNED node, or null
-var HOV_E = null; // [edge ids] incident to the hovered node (revealed preview)
-var SHOW_E = false; // edges hidden until hover/pin, or the edges box
-var HOVERED = null;
-function baseNodeOpacity(id){return (DIM[id]||(HL&&!HL.nodes[id]))?0.25:1;}
-function baseEdgeOpacity(e){
-  if(HOV_E&&HOV_E.indexOf(e.id)>=0) return 1;
-  return (!SHOW_E||DIM[e.a]||DIM[e.b]||(HL&&!HL.edges[e.id]))?0.08:1;
-}
-function baseEdgeHidden(e){
-  if(HOV_E&&HOV_E.indexOf(e.id)>=0) return false;
-  return !SHOW_E&&!(HL&&HL.edges[e.id]);
-}
-function paintNodes(ids){
-  nodes.update(ids.map(function(id){return {id:id,opacity:baseNodeOpacity(id)};}));
-}
-function paintEdges(ids){
-  edges.update(ids.map(function(id){
-    var e = ALL.edges.filter(function(x){return x.id===id;})[0];
-    return {id:id,color:{opacity:baseEdgeOpacity(e)},hidden:baseEdgeHidden(e)};
-  }));
-}
-function allNodeIds(){return ALL.nodes.map(function(n){return n.id;});}
-function allEdgeIds(){return ALL.edges.map(function(e){return e.id;});}
-function applyFilters(){
-  var filtering = document.getElementById("q").value.trim() !== "" ||
-    document.getElementById("f-source").value !== "" ||
-    document.getElementById("f-tracks").value !== "1" ||
-    document.getElementById("f-pop").value !== "0";
-  if(filtering) expandAll();
-  DIM = {};
-  ALL.nodes.filter(function(n){return !passFilters(n);}).forEach(function(n){DIM[n.id]=true;});
-  SHOW_E = document.getElementById("f-edges").checked;
-  paintNodes(allNodeIds());
-  paintEdges(allEdgeIds());
-}
-function setHL(id){
-  // Full batched repaints (two update calls = two redraws): dimming the
-  // outsiders requires touching them, so subset-only paints are wrong
-  // here. Batching keeps it fast; per-item updates were the old freeze.
-  HL = null;
-  if(id){
-    var nb = {}; nb[id]=true;
-    network.getConnectedNodes(id).forEach(function(x){nb[x]=true;});
-    var eb = {};
-    ALL.edges.forEach(function(e){if(e.a===id||e.b===id) eb[e.id]=true;});
-    HL = {nodes:nb,edges:eb};
-  }
-  paintNodes(allNodeIds());
-  paintEdges(allEdgeIds());
-}
-function highlight(id){setHL(id);}
-function clearHighlight(){setHL(null);}
-function setHover(id){
-  // Hover previews incident links only — it never dims anything, so a
-  // stuck highlight can no longer fade the canvas. Click pins focus.
-  var old = HOV_E||[];
-  HOV_E = null;
-  if(id){
-    HOV_E = [];
-    ALL.edges.forEach(function(e){if(e.a===id||e.b===id) HOV_E.push(e.id);});
-  }
-  var fresh = HOV_E||[];
-  paintEdges(old.concat(fresh).filter(function(v,i,a){return a.indexOf(v)===i;}));
-}
-function setWiggle(id){
-  if(HOVERED&&HOVERED!==id) nodes.update({id:HOVERED,borderWidth:HOVERED===pinned?3:1});
-  HOVERED = id;
-  if(id) nodes.update({id:id,borderWidth:3});
-}
-function setPinned(id){
-  if(pinned&&pinned!==id&&pinned!==HOVERED) nodes.update({id:pinned,borderWidth:1});
-  pinned = id;
-  if(id) nodes.update({id:id,borderWidth:3});
-}
-function showInfo(id){
-  if(String(id).indexOf("cluster:")===0){
-    var c = (ALL.clusters||[]).filter(function(x){return "cluster:"+x.id===id;})[0];
-    document.getElementById("info").innerHTML =
-      "<h2>"+escapeHTML(c.label)+"</h2><p>"+c.count+" artist(s) · click the bubble to open it</p>";
-    return;
-  }
-  document.getElementById("info").innerHTML = infoHTML(ALL.byId[id]);
-}
-function clusterColor(id){var h=0;var s="cluster-"+id;for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return "hsl("+(h%360)+", 60%, 70%)";}
-function openClusters(){return (ALL.clusters||[]).map(function(c){return "cluster:"+c.id;}).filter(function(cid){return network.findNode(cid).length>0;});}
-function expandAll(){openClusters().forEach(function(cid){network.openCluster(cid);});openClusters().forEach(function(cid){network.openCluster(cid);});}
-function collapseTop(c){
-  if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
-  network.cluster({
-    joinCondition:(function(gid){return function(n){return n.top===gid;};})(c.id),
-    clusterNodeProperties:{id:"cluster:"+c.id,label:c.label+" ("+c.count+")",shape:"dot",
-      size:16+Math.min(34,c.count),x:c.x,y:c.y,
-      color:{background:clusterColor(c.id),border:"#333"},
-      font:{size:16,face:"sans-serif",bold:true}}
-  });
-}
-function collapseSub(c){
-  if(c.count<2||network.findNode("cluster:"+c.id).length>0) return;
-  network.cluster({
-    joinCondition:(function(sid){return function(n){return n.cl===sid;};})(c.id),
-    clusterNodeProperties:{id:"cluster:"+c.id,label:c.label+" ("+c.count+")",shape:"dot",
-      size:12+Math.min(20,c.count),x:c.x,y:c.y,
-      color:{background:clusterColor(c.id),border:"#333"},
-      font:{size:14,face:"sans-serif",bold:true}}
-  });
-}
-function collapseAll(){
-  expandAll();
-  (ALL.clusters||[]).forEach(function(c){if(!c.parent) collapseTop(c);});
-}
-function openBubble(cid){
-  showInfo(cid);
-  network.openCluster(cid);
-  var base = cid.slice(8);
-  var meta = ALL.clusters.filter(function(x){return x.id===base;})[0]||{};
-  if(!meta.parent){
-    (ALL.clusters||[]).forEach(function(c){if(c.parent===base) collapseSub(c);});
-  }
-}
-fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
-  ALL = g; ALL.byId = {};
-  g.nodes.forEach(function(n){ALL.byId[n.id]=n;});
-  var srcs = {}; g.nodes.forEach(function(n){n.sources.forEach(function(s){srcs[s]=true;});});
-  Object.keys(srcs).sort().forEach(function(s){
-    var o=document.createElement("option");o.value=s;o.textContent=s;
-    document.getElementById("f-source").appendChild(o);
-  });
-  var nGroups = (g.clusters||[]).filter(function(c){return !c.parent;}).length;
-  var nSubs = (g.clusters||[]).filter(function(c){return c.parent;}).length;
-  document.getElementById("counts").textContent =
-    g.nodes.length+" artists in "+nGroups+" groups"+(nSubs?" · "+nSubs+" subgroups":"")+", "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded). "+freshnessLine(g.meta||{});
-function freshnessLine(meta){
-  var bits = [];
-  if(meta.generated_at) bits.push("updated "+meta.generated_at);
-  if(meta.catalog_sha256) bits.push("catalog "+String(meta.catalog_sha256).slice(0,8));
-  return bits.length ? "("+bits.join(" · ")+")" : "(no freshness stamp — regenerate the export)";
-}
-  var vNodes = g.nodes.map(function(n,i){
-    return {id:n.id,label:n.acronym,title:escapeHTML(n.name)+" — "+n.tracks+" tracks",
-      shape:"circle",color:{background:n.color,border:"#555"},value:10+n.tracks*8,
-      x:n.x,y:n.y,cl:n.cluster,top:n.top,fixed:{x:true,y:true},font:{size:14,face:"sans-serif"}};
-  });
-  var vEdges = g.edges.map(function(e,i){
-    return {id:"e"+i,from:e.a,to:e.b,value:0.3+(e.w==null?0.5:e.w)*1.7,
-      color:{opacity:1},smooth:false,hidden:!document.getElementById("f-edges").checked};
-  });
-  g.edges.forEach(function(e,i){e.id="e"+i;});
-  nodes = new vis.DataSet(vNodes); edges = new vis.DataSet(vEdges);
-  network = new vis.Network(document.getElementById("network"),{nodes:nodes,edges:edges},{
-    physics:{enabled:false},
-    interaction:{hover:true,hoverConnectedEdges:false,zoomView:true,dragView:true,dragNodes:false,multiselect:false,hideEdgesOnDrag:true},
-    nodes:{borderWidth:1},edges:{smooth:false}
-  });
-  network.on("hoverNode",function(p){
-    var id = String(p.node);
-    if(id.indexOf("cluster:")===0){showInfo(id);return;}
-    if(DIM[p.node]) return;
-    showInfo(p.node);setHover(p.node);setWiggle(p.node);
-  });
-  network.on("blurNode",function(p){setHover(null);setWiggle(null);});
-  network.on("click",function(p){
-    if(p.nodes.length){
-      var cid = String(p.nodes[0]);
-      if(cid.indexOf("cluster:")===0){openBubble(cid);return;}
-      if(DIM[cid]) return;
-      setPinned(p.nodes[0]);showInfo(pinned);highlight(pinned);
-      network.focus(pinned,{scale:1.5,animation:false});
-    }
-    else{setPinned(null);clearHighlight();}
-  });
-  document.getElementById("info").addEventListener("click",function(ev){
-    var a = ev.target.closest ? ev.target.closest("a[data-id]") : null;
-    if(a){ev.preventDefault();var id=a.getAttribute("data-id");if(DIM[id])return;setPinned(id);showInfo(id);highlight(id);network.focus(id,{scale:1.5,animation:false});network.selectNodes([id]);}
-  });
-  ["q","f-source","f-tracks","f-pop","f-edges"].forEach(function(id){
-    document.getElementById(id).addEventListener("input",function(){
-      document.getElementById("f-pop-v").textContent=document.getElementById("f-pop").value;
-      applyFilters();
-    });
-  });
-  document.getElementById("f-reset").addEventListener("click",function(){
-    document.getElementById("q").value="";document.getElementById("f-source").value="";
-    document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
-    document.getElementById("f-pop-v").textContent="0";
-    document.getElementById("f-edges").checked=false;
-    applyFilters();collapseAll();
-  });
-  document.getElementById("f-expand").addEventListener("click",function(){expandAll();});
-  document.getElementById("f-collapse").addEventListener("click",function(){collapseAll();});
-  collapseAll();
-}).catch(function(err){
-  document.getElementById("counts").textContent =
-    "Could not load graph.json ("+err+"). Serve this folder over http: python3 -m http.server";
-});
-</script>
-</body></html>
-"""
+def _site_template() -> str:
+    """Load the browser page template (lives beside this module)."""
+    return (Path(__file__).with_name("site_template.html")).read_text(encoding="utf-8")
+
+
+SITE_TEMPLATE = _site_template()
 
 
 def render_site(catalog: dict, out_dir: str | Path,
-                title: str = "Music catalog — artist similarity browser",
+                title: str = "Music catalog — artist constellation",
                 catalog_sha: str | None = None) -> dict:
     """Export the GitHub Pages site: ``graph.json`` + ``index.html``.
 
@@ -907,7 +659,7 @@ def render_site(catalog: dict, out_dir: str | Path,
                      "generator": "music-catalog-viz"}
     with open(out / "graph.json", "w", encoding="utf-8") as f:
         json.dump(graph, f, ensure_ascii=False, indent=1)
-    page = SITE_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__VIS_CDN__", VIS_CDN)
+    page = SITE_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__FG_CDN__", FG_CDN)
     with open(out / "index.html", "w", encoding="utf-8") as f:
         f.write(page)
     return {"dir": str(out), "nodes": len(graph["nodes"]),

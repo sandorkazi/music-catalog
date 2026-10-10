@@ -130,16 +130,13 @@ display/filter metadata and don't affect scoring yet.
 The live artist-similarity browser is served from the **data repo**:
 `docs/graph.json` (kNN similarity graph over in-catalog artists, same
 `artist_distance` the CLI `similar` query uses) plus `docs/index.html`
-(vis-network via CDN: force layout, wheel-zoom, hover → neighbourhood
-highlight + camera focus + info panel, click to pin, filters for
-search/source/track-count/popularity). Node positions are precomputed
-at export (same PCA projection as the static maps), so the page
-renders instantly, every node frozen at its stored position
-(export also de-collides overlaps): filters only fade
-non-matches to transparent + unclickable, nothing ever moves.
-Edges are degree-capped (closest-first, tie-aware pools so no
-artist is starved behind a hub) and hidden until hover — hover a
-node to light its neighbourhood, tick the edges box to show all.
+— a midnight-constellation canvas (force-graph 2D custom paint over
+WebGL-free canvas: glow nodes, faint links, starfield, glass UI).
+Node positions are precomputed at export (same PCA projection as
+the static maps, de-collided) and frozen; the browser never runs a
+layout. Edges are degree-capped (closest-first, tie-aware pools so
+no artist is starved behind a hub) and hidden until hover — hover a
+node to light its neighbourhood, tick the links box to show all.
 Artists start grouped in similarity bubbles (label propagation,
 precomputed centers, stored in the export) — click one for
 subgroup bubbles (no bubble opens to more than 40 artists),

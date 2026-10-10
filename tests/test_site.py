@@ -195,7 +195,7 @@ def test_render_site_writes_graph_and_page(tmp_path):
     assert summary["nodes"] == 3
     assert (tmp_path / "site" / "graph.json").exists()
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
-    assert "vis-network" in page and "graph.json" in page
+    assert "ForceGraph" in page and "graph.json" in page
 
 
 def test_catalog_fingerprint_stable_and_sensitive():
@@ -218,7 +218,7 @@ def test_render_site_stamps_meta(tmp_path):
     assert g["meta"]["catalog_sha256"] == catalog_fingerprint(_catalog())
     assert g["meta"]["generated_at"]
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
-    assert "freshnessLine" in page and "catalog_sha256" in page
+    assert "catalog_sha256" in page and "updated " in page
 
 
 def test_spread_separates_stacks_deterministically():
@@ -235,17 +235,19 @@ def test_spread_separates_stacks_deterministically():
     assert a[10] == (500.0, 500.0)  # isolated point untouched
 
 
-def test_rendered_page_freezes_nodes_and_dims_on_filter(tmp_path):
-    summary = render_site(_catalog(), tmp_path / "site")
+def test_rendered_page_observatory_contract(tmp_path):
+    render_site(_catalog(), tmp_path / "site")
     page = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
-    assert "fixed:{x:true,y:true}" in page
-    assert "dragNodes:false" in page
-    assert "f-phys" not in page
-    assert 'id="f-edges" type="checkbox"> edges' in page  # edges off by default
-    assert "hidden:!document.getElementById" in page
-    for marker in ("setHL", "setPinned", "setWiggle", "setHover", "DIM", "HOV_E",
-                   "expandAll", "collapseAll", "openBubble", "collapseTop",
-                   "collapseSub", "n.top", "e.w"):
+    assert "vis-network" not in page and "f-phys" not in page
+    assert 'id="f-edges" type="checkbox"> links' in page  # links off by default
+    for marker in ("ForceGraph", "nodeCanvasObject", "nodeCanvasObjectMode",
+                   "nodePointerAreaPaint", "nodeVisibility",
+                   "linkColor", "linkWidth", "linkLineDash",
+                   "onNodeHover", "onNodeClick", "onBackgroundClick",
+                   "autoPauseRedraw(false)", "enableNodeDrag(false)",
+                   "zoomToFit", "centerAt", "pauseAnimation",
+                   "setPinned", "openBubble", "expandAll", "collapseAll",
+                   "DIM", "SHOW_E", "onRenderFramePre"):
         assert marker in page, marker
-    assert "showInfo(p.node);setHover(p.node);setWiggle(p.node);" in page
-    assert "setHL(p.node)" not in page  # hover must never dim the canvas
+    assert "ctx.arc(x,y" in page  # custom paint uses absolute coords (lib does no translate)
+    assert "x:n.x, y:n.y, fx:n.x, fy:n.y" in page  # preset x/y: bbox/zoom valid pre-tick

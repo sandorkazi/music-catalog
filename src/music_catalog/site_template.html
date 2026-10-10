@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg0:#04060e; --bg1:#0a1024;
+  --glass:rgba(10,16,32,.72); --line:rgba(140,180,255,.16);
+  --txt:#e6edf7; --mut:#8b98b8; --acc:#7dd3fc; --acc2:#c4b5fd;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; overflow:hidden; color:var(--txt);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:
+    radial-gradient(1200px 800px at 70% -10%, #16204a 0%, transparent 60%),
+    radial-gradient(1000px 700px at 10% 110%, #1c1040 0%, transparent 55%),
+    linear-gradient(var(--bg0), var(--bg1));
+}
+#stage{position:fixed; inset:0}
+#stage canvas{display:block}
+#vignette{position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(ellipse at center, transparent 55%, rgba(0,0,5,.55) 100%)}
+h1{
+  font-family:"Space Grotesk",Inter,system-ui,sans-serif; font-size:20px; margin:0;
+  letter-spacing:.02em; font-weight:700;
+}
+h1 .dot{color:var(--acc)}
+#counts{font-size:12px; color:var(--mut); margin:4px 0 0}
+.panel{
+  background:var(--glass); border:1px solid var(--line); border-radius:14px;
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  box-shadow:0 8px 32px rgba(0,0,0,.45);
+}
+#hud{position:fixed; top:14px; left:14px; padding:12px 14px; max-width:430px; z-index:5}
+#toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; font-size:12px}
+#toolbar input[type=search],#toolbar select{
+  background:rgba(255,255,255,.06); color:var(--txt); border:1px solid var(--line);
+  border-radius:8px; padding:5px 8px; font-size:12px; font-family:inherit; max-width:150px;
+}
+#toolbar input[type=range]{accent-color:var(--acc); width:90px}
+#toolbar label{color:var(--mut); display:flex; align-items:center; gap:5px; white-space:nowrap}
+#toolbar button{
+  background:rgba(125,211,252,.12); color:var(--txt); border:1px solid var(--line);
+  border-radius:8px; padding:5px 10px; font-size:12px; font-family:inherit; cursor:pointer;
+}
+#toolbar button:hover{background:rgba(125,211,252,.25)}
+#toolbar input[type=checkbox]{accent-color:var(--acc)}
+#info{position:fixed; top:14px; right:14px; width:290px; max-height:calc(100vh - 28px);
+  overflow:auto; padding:14px 16px; font-size:13px; z-index:5}
+#info h2{font-family:"Space Grotesk",Inter,sans-serif; font-size:16px; margin:.1em 0 .4em}
+#info p{margin:.35em 0; color:var(--mut)}
+#info p b{color:var(--txt); font-weight:600}
+#info ul{padding-left:1.1em; margin:.4em 0}
+#info li{margin:.15em 0}
+#info a{color:var(--acc); text-decoration:none; cursor:pointer}
+#info a:hover{text-decoration:underline}
+#tip{
+  position:fixed; z-index:9; pointer-events:none; display:none; max-width:260px;
+  background:rgba(8,12,26,.92); border:1px solid var(--line); border-radius:10px;
+  padding:8px 10px; font-size:12px; box-shadow:0 6px 24px rgba(0,0,0,.5);
+}
+#tip h3{font-family:"Space Grotesk",Inter,sans-serif; font-size:13px; margin:0 0 3px}
+#tip p{margin:2px 0; color:var(--mut)}
+#tip p b{color:var(--txt)}
+footer{position:fixed; left:14px; bottom:10px; z-index:5; color:var(--mut); font-size:11px;
+  max-width:min(700px,60vw)}
+footer code{color:var(--txt)}
+@media(max-width:900px){ #info{display:none} #hud{max-width:calc(100vw - 28px)} }
+</style></head><body>
+<div id="stage"></div>
+<div id="vignette"></div>
+<div id="hud" class="panel">
+  <h1>Music catalog <span class="dot">·</span> constellation</h1>
+  <p id="counts">Loading…</p>
+  <div id="toolbar">
+    <label>Search <input id="q" type="search" placeholder="artist name"></label>
+    <label>Source <select id="f-source"><option value="">all</option></select></label>
+    <label>Min tracks <select id="f-tracks"><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></label>
+    <label>Min popularity <input id="f-pop" type="range" min="0" max="100" value="0"> <span id="f-pop-v">0</span></label>
+    <label title="Show all similarity links (hidden until hover otherwise)"><input id="f-edges" type="checkbox"> links</label>
+    <button id="f-expand" title="Open every bubble">Expand all</button>
+    <button id="f-collapse" title="Collapse back to group bubbles">Collapse all</button>
+    <button id="f-reset">Reset</button>
+  </div>
+</div>
+<aside id="info" class="panel"><h2>Artist info</h2><p>Artists start in group bubbles — click one for subgroup bubbles, again for artists. Hover a circle to preview its strongest links, click to pin. Scroll to zoom, drag to pan. Positions are fixed: filters only fade out non-matches, nothing ever moves.</p></aside>
+<div id="tip"></div>
+<footer>Metadata (names, counts) from the curated catalog in this repo (<code>state/catalog.json</code>). No audio, lyrics, or artwork hosted here.<br>Generated from the dataset in this repo — regenerate with <code>catalog viz --out-dir docs</code> whenever the catalog changes. Needs http (<code>python3 -m http.server</code>) — file:// blocks graph.json.</footer>
+<script src="__FG_CDN__"></script>
+<script>
+var ALL=null, BYID={}, Graph=null;
+var DIM={}, HL=null, PINNED=null, HOVERED=null, SHOW_E=false;
+var LASTMOUSE={x:0,y:0};
+
+function mulberry(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;var t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+var STARS=(function(){var R=mulberry(20261007),s=[],i;for(i=0;i<340;i++){s.push({u:R(),v:R(),r:R()*1.3+0.3,a:R()*0.5+0.12,c:R()<0.14?"#c4b5fd":(R()<0.3?"#7dd3fc":"#ffffff")});}return s;})();
+
+function escapeHTML(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function bubbleHue(id){var h=0,s="cluster-"+id,i;for(i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return "hsl("+(h%360)+", 70%, 62%)";}
+
+function infoHTML(n){
+  var sims = ALL.edges.filter(function(e){return e.a===n.id||e.b===n.id;})
+    .map(function(e){var o=e.a===n.id?e.b:e.a;var m=BYID[o];return {n:m,d:e.dist,w:e.w};})
+    .sort(function(x,y){return (x.d-y.d)||((x.n&&x.n.name||"")<(y.n&&y.n.name||"")?-1:1);}).slice(0,5);
+  var h = "<h2>"+escapeHTML(n.name)+"</h2><p><b>"+n.tracks+"</b> track(s) · pop <b>"+n.pop+"</b> · "+escapeHTML(n.sources.join(", "))+"</p>";
+  h += sims.length ? "<p><strong>Nearest neighbours</strong></p><ul>"+sims.map(function(s){
+    return "<li><a data-id='"+s.n.id+"'>"+escapeHTML(s.n.name)+"</a> ("+s.d.toFixed(2)+")</li>";}).join("")+"</ul>"
+    : "<p>No links kept for this artist.</p>";
+  return h;
+}
+function bubbleHTML(c){
+  return "<h2>"+escapeHTML(c.label)+"</h2><p><b>"+c.count+"</b> artist(s) · click the bubble to open it</p>";
+}
+function tipHTML(n){
+  if(n._bubble){var c=ALL.clusters.filter(function(x){return "cluster:"+x.id===n.id;})[0];
+    return "<h3>"+escapeHTML(c.label)+"</h3><p><b>"+c.count+"</b> artists — click to open</p>";}
+  return "<h3>"+escapeHTML(n.name)+"</h3><p><b>"+n.tracks+"</b> tracks · pop <b>"+n.pop+"</b></p>";
+}
+
+function passFilters(n){
+  var src = document.getElementById("f-source").value;
+  var mt = parseInt(document.getElementById("f-tracks").value,10);
+  var mp = parseInt(document.getElementById("f-pop").value,10);
+  var q = document.getElementById("q").value.trim().toLowerCase();
+  if(n._bubble) return true;
+  if(src && n.sources.indexOf(src)<0) return false;
+  if(n.tracks<mt||n.pop<mp) return false;
+  if(q && n.name.toLowerCase().indexOf(q)<0) return false;
+  return true;
+}
+var FILTER_T=null;
+function applyFilters(){
+  var filtering = document.getElementById("q").value.trim() !== "" ||
+    document.getElementById("f-source").value !== "" ||
+    document.getElementById("f-tracks").value !== "1" ||
+    document.getElementById("f-pop").value !== "0";
+  if(filtering) expandAll();
+  DIM = {};
+  ALL.nodes.forEach(function(n){ if(!n._bubble && !passFilters(n)) DIM[n.id]=true; });
+  SHOW_E = document.getElementById("f-edges").checked;
+}
+function applyFiltersSoon(){ if(FILTER_T) clearTimeout(FILTER_T); FILTER_T=setTimeout(applyFilters,120); }
+
+function nodeAlpha(n){
+  if(DIM[n.id]) return 0.1;
+  if(HL && !HL.nodes[n.id]) return 0.22;
+  return 1;
+}
+function linkEnds(l){
+  var a=l.source, b=l.target;
+  if(a&&a.id!==undefined) a=a.id;
+  if(b&&b.id!==undefined) b=b.id;
+  return [a,b];
+}
+function linkKey(l){ return linkEnds(l).slice().sort().join("|"); }
+function linkAlpha(l){
+  var e=linkEnds(l), a=e[0], b=e[1];
+  if(DIM[a]||DIM[b]) return 0.015;
+  if(HL && !HL.links[[a,b].sort().join("|")]) return 0.03;
+  if(!SHOW_E && !(HOVERED&&(a===HOVERED||b===HOVERED))) return 0.0;
+  return 0.10+0.30*(l.w==null?0.5:l.w);
+}
+function linkWidth(l){ return 0.8+1.6*(l.w==null?0.5:l.w); }
+
+function paintNode(n, ctx, gs){
+  var x=n.x, y=n.y;
+  var r = n._bubble ? 15+Math.min(30,n.count) : 5+n.tracks*1.7;
+  var a = nodeAlpha(n);
+  var col = n._bubble ? bubbleHue(n.cid) : n.color;
+  var g = ctx.createRadialGradient(x,y,0, x,y,r*3.2);
+  g.addColorStop(0,col); g.addColorStop(0.35,col); g.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.globalAlpha = (n._bubble?0.5:0.42)*a;
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x,y,r*3.2,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  if(n._bubble){
+    ctx.strokeStyle="rgba(255,255,255,.8)"; ctx.lineWidth=Math.max(1,1.6/gs);
+    ctx.setLineDash([7,5]); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="#fff"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.font="700 "+Math.max(9,r*0.62)+"px 'Space Grotesk',sans-serif";
+    ctx.fillText(n.label,x,y-r*0.18);
+    ctx.font="500 "+Math.max(8,r*0.42)+"px Inter,sans-serif"; ctx.fillStyle="rgba(255,255,255,.85)";
+    ctx.fillText(n.count+" artists",x,y+r*0.42);
+  } else if(gs>1.7 || n.id===PINNED || n.id===HOVERED){
+    ctx.fillStyle="#fff"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    var fs = n.id===PINNED||n.id===HOVERED ? 7 : 11/gs;
+    ctx.font="600 "+fs+"px Inter,sans-serif";
+    ctx.fillText(n.acronym,x,y+0.5);
+  }
+  ctx.globalAlpha = 1;
+}
+function paintPointer(n, paintColor, ctx, gs){
+  var r = n._bubble ? 15+Math.min(30,n.count) : 5+n.tracks*1.7;
+  ctx.fillStyle = paintColor;
+  ctx.beginPath(); ctx.arc(n.x,n.y,r*1.4+4/gs,0,Math.PI*2); ctx.fill();
+}
+
+function setPinned(id){
+  PINNED = id;
+  HL = null;
+  if(id){
+    var nb={}; nb[id]=true;
+    ALL.edges.forEach(function(e){ if(e.a===id) nb[e.b]=true; else if(e.b===id) nb[e.a]=true; });
+    var eb={};
+    ALL.edges.forEach(function(e){ if(e.a===id||e.b===id) eb[e.source+"|"+e.target]=true; });
+    HL={nodes:nb,links:eb};
+  }
+}
+function openBubble(cid){
+  var meta=null,i;
+  for(i=0;i<ALL.clusters.length;i++){ if("cluster:"+ALL.clusters[i].id===cid){meta=ALL.clusters[i];break;} }
+  showBubbleInfo(cid);
+  Graph.graphData().nodes.forEach(function(n){ if(n.id===cid) n._hidden=true; });
+  var kids = ALL.clusters.filter(function(c){return c.parent===(meta&&meta.id);});
+  if(kids.length){
+    var kset={}; kids.forEach(function(c){kset["cluster:"+c.id]=true;});
+    Graph.graphData().nodes.forEach(function(n){ if(kset[n.id]) n._hidden=false; });
+  } else if(meta){
+    Graph.graphData().nodes.forEach(function(n){ if(!n._bubble && n.cluster===meta.id) n._hidden=false; });
+  }
+}
+function showBubbleInfo(cid){
+  var c=null,i;
+  for(i=0;i<ALL.clusters.length;i++){ if("cluster:"+ALL.clusters[i].id===cid){c=ALL.clusters[i];break;} }
+  if(c) document.getElementById("info").innerHTML = bubbleHTML(c);
+}
+function resetVisibility(){
+  var multi={};
+  ALL.clusters.forEach(function(c){ if(c.count>=2) multi[c.id]=true; });
+  Graph.graphData().nodes.forEach(function(n){
+    // Only top-level bubbles show initially; sub-bubbles appear when their
+    // parent opens. Artists hide inside whichever bubble holds them.
+    if(n._bubble){ n._hidden = !(n.top===n.cid && multi[n.cid]); }
+    else { n._hidden = !!multi[n.cluster]; }
+  });
+}
+function expandAll(){
+  Graph.graphData().nodes.forEach(function(n){ n._hidden = !!n._bubble; });
+}
+function collapseAll(){ resetVisibility(); }
+
+fetch("graph.json").then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(g){
+  ALL = g; BYID = {};
+  g.nodes.forEach(function(n){BYID[n.id]=n;});
+  var nodes = g.nodes.map(function(n){
+    // NOTE: x/y AND fx/fy must both be set up front. The engine only fills
+    // x/y on its first tick, but zoomToFit + bbox read them immediately —
+    // without preset x/y the camera computes NaN and the canvas goes black.
+    return {id:n.id, x:n.x, y:n.y, fx:n.x, fy:n.y, name:n.name, acronym:n.acronym, color:n.color,
+      tracks:n.tracks, pop:n.pop, sources:n.sources, cluster:n.cluster, top:n.top,
+      _bubble:false, _hidden:false};
+  });
+  g.clusters.forEach(function(c){
+    if(c.count<2) return;
+    nodes.push({id:"cluster:"+c.id, _bubble:true, cid:c.id, label:c.label, count:c.count,
+      x:c.x, y:c.y, fx:c.x, fy:c.y, name:c.label, acronym:"", color:"#8b98b8",
+      tracks:0, pop:0, sources:[], cluster:c.id, top:c.parent||c.id, _hidden:true});
+  });
+  var links = g.edges.map(function(e,i){
+    return {id:"e"+i, source:e.a, target:e.b, dist:e.dist, lvl:e.lvl, w:e.w};
+  });
+  var srcs = {}; g.nodes.forEach(function(n){n.sources.forEach(function(s){srcs[s]=true;});});
+  Object.keys(srcs).sort().forEach(function(s){
+    var o=document.createElement("option");o.value=s;o.textContent=s;
+    document.getElementById("f-source").appendChild(o);
+  });
+  var nGroups = g.clusters.filter(function(c){return !c.parent;}).length;
+  var nSubs = g.clusters.filter(function(c){return c.parent;}).length;
+  var meta = g.meta||{};
+  var stamp = (meta.generated_at||meta.catalog_sha256)
+    ? " (updated "+(meta.generated_at||"?")+" · catalog "+String(meta.catalog_sha256||"?").slice(0,8)+")" : "";
+  document.getElementById("counts").textContent =
+    g.nodes.length+" artists in "+nGroups+" groups"+(nSubs?" · "+nSubs+" subgroups":"")+
+    ", "+g.edges.length+" similarity links ("+g.excluded_zero_track+" zero-track artists excluded)."+stamp;
+
+  Graph = ForceGraph()(document.getElementById("stage"))
+    .graphData({nodes:nodes, links:links})
+    .backgroundColor("rgba(0,0,0,0)")
+    .autoPauseRedraw(false)
+    .enableNodeDrag(false)
+    .nodeRelSize(6)
+    .nodeVal(function(n){return n._bubble?n.count:3+n.tracks;})
+    .nodeVisibility(function(n){return !n._hidden;})
+    .nodeCanvasObject(function(n,ctx,gs){paintNode(n,ctx,gs);})
+    .nodeCanvasObjectMode(function(){return "replace";})
+    .nodePointerAreaPaint(function(n,color,ctx,gs){paintPointer(n,color,ctx,gs);})
+    .linkVisibility(function(){return true;})
+    .linkColor(function(l){
+      var hot = HL && HL.links[linkKey(l)];
+      var a = linkAlpha(l);
+      if(a<=0.001) return "rgba(0,0,0,0)";
+      return hot ? "rgba(186,230,253,"+Math.max(a,0.55)+")" : "rgba(148,163,184,"+a+")";
+    })
+    .linkWidth(linkWidth)
+    .linkLineDash(function(l){return l.lvl===2?[6,5]:null;})
+    .linkDirectionalParticles(function(l){
+      var e=linkEnds(l);
+      return (PINNED&&(e[0]===PINNED||e[1]===PINNED))?2:0;
+    })
+    .linkDirectionalParticleWidth(2)
+    .linkDirectionalParticleColor("rgba(186,230,253,.9)")
+    .onRenderFramePre(function(ctx){
+      var w = ctx.canvas.width, h = ctx.canvas.height, i, s;
+      ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+      for(i=0;i<STARS.length;i++){ s=STARS[i];
+        ctx.globalAlpha = s.a; ctx.fillStyle = s.c;
+        ctx.beginPath(); ctx.arc(s.u*w, s.v*h, s.r, 0, Math.PI*2); ctx.fill(); }
+      ctx.restore(); ctx.globalAlpha = 1;
+    })
+    .onNodeHover(function(n){
+      HOVERED = (n && !DIM[n.id]) ? n.id : null;
+      var tip = document.getElementById("tip");
+      if(n && !DIM[n.id]){ tip.innerHTML = tipHTML(n); tip.style.display="block"; moveTip(); }
+      else tip.style.display="none";
+      document.getElementById("stage").style.cursor = n ? "pointer" : "grab";
+    })
+    .onNodeClick(function(n){
+      if(DIM[n.id]) return;
+      if(n._bubble){ openBubble(n.id); return; }
+      setPinned(n.id);
+      var d = document.getElementById("info"); d.innerHTML = infoHTML(BYID[n.id]);
+      Graph.centerAt(n.x, n.y, 800);
+    })
+    .onBackgroundClick(function(){ setPinned(null); });
+  resetVisibility();
+  Graph.zoomToFit(1400, 60);
+
+  var stage = document.getElementById("stage");
+  stage.addEventListener("mousemove",function(ev){
+    var r = stage.getBoundingClientRect();
+    LASTMOUSE.x = ev.clientX-r.left; LASTMOUSE.y = ev.clientY-r.top; moveTip();
+  });
+  function moveTip(){
+    var tip = document.getElementById("tip");
+    if(tip.style.display!=="block") return;
+    var x = Math.min(LASTMOUSE.x+16, window.innerWidth-280);
+    var y = Math.min(LASTMOUSE.y+16, window.innerHeight-120);
+    tip.style.left = x+"px"; tip.style.top = y+"px";
+  }
+  document.getElementById("info").addEventListener("click",function(ev){
+    var a = ev.target.closest ? ev.target.closest("a[data-id]") : null;
+    if(a){ev.preventDefault();var id=a.getAttribute("data-id");if(DIM[id]||!BYID[id])return;
+      setPinned(id);document.getElementById("info").innerHTML=infoHTML(BYID[id]);
+      var p=Graph.graphData().nodes.filter(function(n){return n.id===id;})[0];
+      if(p) Graph.centerAt(p.x,p.y,800);}
+  });
+  ["q","f-source","f-tracks","f-pop","f-edges"].forEach(function(id){
+    document.getElementById(id).addEventListener("input",function(){
+      document.getElementById("f-pop-v").textContent=document.getElementById("f-pop").value;
+      applyFiltersSoon();
+    });
+  });
+  document.getElementById("f-reset").addEventListener("click",function(){
+    document.getElementById("q").value="";document.getElementById("f-source").value="";
+    document.getElementById("f-tracks").value="1";document.getElementById("f-pop").value="0";
+    document.getElementById("f-pop-v").textContent="0";
+    document.getElementById("f-edges").checked=false;
+    setPinned(null);applyFilters();collapseAll();
+  });
+  document.getElementById("f-expand").addEventListener("click",function(){expandAll();});
+  document.getElementById("f-collapse").addEventListener("click",function(){collapseAll();});
+  document.addEventListener("visibilitychange",function(){
+    if(document.hidden) Graph.pauseAnimation(); else Graph.resumeAnimation();
+  });
+  window.addEventListener("resize",function(){
+    Graph.width(stage.clientWidth).height(stage.clientHeight);
+  });
+}).catch(function(err){
+  document.getElementById("counts").textContent =
+    "Could not load graph.json ("+err+"). Serve this folder over http: python3 -m http.server";
+});
+</script>
+</body></html>
