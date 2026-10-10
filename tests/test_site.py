@@ -244,12 +244,15 @@ def test_rendered_page_observatory_contract(tmp_path):
                    "nodePointerAreaPaint", "nodeVisibility",
                    "linkColor", "linkWidth", "linkLineDash",
                    "stage.addEventListener",
-                   "autoPauseRedraw(false)", "enableNodeDrag(false)",
+                   "autoPauseRedraw(false)", "enableNodeDrag(true)",
+                   "cooldownTicks", "cooldownTime", "warmupTicks",
+                   "d3AlphaDecay", "d3VelocityDecay",
+                   "d3Force(\"link\")", "d3Force(\"charge\")", "d3Force(\"center\")",
+                   "d3ReheatSimulation", "onEngineStop",
                    "zoomToFit", "centerAt", "pauseAnimation",
                    "setPinned", "openBubble", "expandAll", "collapseAll",
                    "pick(", "nodeRadius(", "liveTransform(", "graph2ScreenCoords",
                    "DIM", "SHOW_E", "onRenderFramePre"):
         assert marker in page, marker
-    assert "cooldownTicks" not in page  # engine left running: live accessors
+    assert "fx:n.x, fy:n.y" not in page  # force engine owns positions: no pinning
     assert "ctx.arc(x,y" in page  # custom paint uses absolute coords (lib does no translate)
-    assert "x:n.x, y:n.y, fx:n.x, fy:n.y" in page  # preset x/y: bbox/zoom valid pre-tick

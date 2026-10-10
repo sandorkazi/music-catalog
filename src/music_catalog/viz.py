@@ -419,8 +419,8 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
 
     Nodes carry ``{id, name, acronym, color, tracks, pop, sources, x, y,
     cluster}``; ``x``/``y`` is a precomputed PCA layout (same projection
-    as the static maps, de-collided) so the page renders instantly with
-    every node frozen in place; ``cluster`` is the genre id where tags
+    as the static maps, de-collided) seeding the browser's live d3 force
+    simulation from stable starting positions; ``cluster`` is the genre id where tags
     exist (see :func:`cluster_for`) else a ``group-*`` similarity
     community from deterministic label propagation — artists migrate
     to genre bubbles automatically once tagged. Node ``color`` follows
@@ -442,9 +442,9 @@ def build_graph(catalog: dict, k: int = GRAPH_K) -> dict:
     vecs = {a["id"]: artist_vector(catalog, a["id"]) for a in artists}
     in_catalog = [a for a in artists if vecs[a["id"]]["count"] >= 1]
     # Precomputed layout: same PCA projection the static maps use, plus a
-    # deterministic de-collision pass, so the browser renders instantly
-    # with every node frozen in place. Positions are stable for a given
-    # catalog.
+    # deterministic de-collision pass, seeding the browser's live force
+    # simulation from stable starting positions. Positions are stable for
+    # a given catalog.
     pos = _spread(_norm(project([vecs[a["id"]] for a in in_catalog]),
                         w=1600.0, h=1000.0, pad=60.0))
     nodes = []
