@@ -96,6 +96,10 @@ def cmd_monitor(args) -> int:
 
 def cmd_publish(args) -> int:
     """v2 entry point, v1 stub: dry-run preview only, refuse real writes."""
+    if not args.dry_run and not getattr(args, "confirm", False):
+        print("error: real writes need --confirm (v1 still refuses after that: --dry-run only)",
+              file=sys.stderr)
+        return 2
     catalog, _ = load_catalog(args.data_dir)
     # curated set: target 2 tracks/artist, highest popularity first
     by_artist: dict[str, list] = {}
@@ -472,6 +476,10 @@ def build_parser() -> argparse.ArgumentParser:
     pu = sub.add_parser("publish", help="publish curated set (v1: --dry-run preview only)")
     pu.add_argument("--to", default="both", choices=["youtube", "spotify", "both"])
     pu.add_argument("--dry-run", action="store_true", help="preview only (required in v1)")
+    pu.add_argument("--confirm", action="store_true",
+                    help="v2: acknowledge a real write (still refused until publishers land)")
+    pu.add_argument("--config", default=None,
+                    help="publish IDs file (*.local.json, git-ignored; env overrides)")
     pu.add_argument("--limit", type=int, default=None, help="v2 batching hint")
     pu.set_defaults(func=cmd_publish)
     ca = sub.add_parser("candidates", help="rank a candidate pool for a gap artist (2-pick)")

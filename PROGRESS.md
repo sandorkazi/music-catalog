@@ -11,6 +11,20 @@
 
 Log: last green commit + next box here on every stop.
 
+- 2026-10-11: v2 publish token-path scaffold on `develop` —
+  `publish_config.py` (playlist-ID allowlist, env override, secret-key
+  reject), `scripts/get-spotify-token.py` + `get-youtube-token.py`
+  (stdlib localhost OAuth, minimal scopes), `publish --confirm/--config`
+  (real writes still refused), `tests/test_publish_config.py`.
+  Decision: no password/cookie automation (ban + full-session risk);
+  manual add-lists instead (`/tmp/manual-spotify.md` 113,
+  `/tmp/manual-youtube.md` 1421; both playlists target 1534).
+  Blockers: Spotify needs Premium + app creation unfrozen; YouTube
+  writes need a free Cloud project. Verified stdlib-only (no pytest
+  here): config checks + `publish --dry-run/--confirm` exits green.
+  Data repo untouched. Next: user creates both playlists, works the
+  113 Spotify batch, verifies via exports.
+
 - 2026-10-11: dual-source consolidation on `develop` (uncommitted) —
   tracks are source-agnostic (schema v3 `sources` map, in-memory
   migration): imports link the second side (`linked_tracks`), artist
